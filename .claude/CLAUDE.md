@@ -121,3 +121,43 @@ Agent C: app/(pages)/[page]/page.js  ← only after API is done
 - API prefix: `/api/v1/...` (add from the start)
 - UUID primary keys everywhere
 - All routes are protected by JWT except `/api/auth/register` and `/api/auth/login`
+
+---
+
+## Git & Commit Guidelines
+
+This project is a hiring showcase — commits are part of the story.
+
+- **Commits must be meaningful** — describe what was built and why, not just "fix" or "update"
+- **Commit per logical unit** — one commit per feature/service/page, not one giant commit
+- **No AI mentions** — do not reference Claude, AI, or code generation in any commit message, comment, or doc
+- **Good commit format:**
+  ```
+  Add signal scoring logic with weighted momentum and volume indicators
+
+  Add news ingestion with AFINN sentiment analysis and ticker extraction
+
+  Fix alert cooldown not resetting after rule update
+  ```
+
+---
+
+## Decision Log
+
+Record important architectural or implementation decisions here as the project evolves. This feeds into the final README and any writeup.
+
+| Date | Decision | Reason |
+|------|----------|--------|
+| 2026-03-11 | No Python microservice — all compute in Node | Simpler stack, Node libraries sufficient for this scale |
+| 2026-03-11 | No `assets` table — fetch live from Yahoo Finance, cache in Redis | Avoids stale data, reduces DB complexity |
+| 2026-03-11 | `alert_rules` stored as JSONB inside `alerts` | No need for separate table at this scale |
+| 2026-03-11 | Scheduler lives inside Notification System | Keeps background jobs co-located with the service that owns them |
+
+---
+
+## Documentation Notes
+
+- Keep a running `docs/DECISIONS.md` for any significant change from the original plan
+- Before deploying, write a proper `README.md` covering: what the project does, architecture diagram, tech stack, how to run locally, and live demo link
+- The architecture diagram (currently in Figma/draw.io) should be exported and included in the README
+- Do not mention AI tooling anywhere in public-facing docs

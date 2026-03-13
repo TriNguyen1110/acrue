@@ -1,26 +1,101 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Navy */
+  --navy-950: #020810;
+  --navy-900: #050d1a;
+  --navy-800: #0a1628;
+  --navy-700: #0f1f38;
+  --navy-600: #152848;
+  --navy-500: #1a3158;
+
+  /* Gold */
+  --gold-300: #fdfbf7;
+  --gold-400: #f7f3e5;
+  --gold-500: #ede4cc;
+  --gold-600: #d4ccae;
+
+  /* Text */
+  --text-primary: #e8e8f0;
+  --text-secondary: #a0abbe;
+  --text-muted: #5c6880;
+
+  /* Border */
+  --border: #1a2d4a;
+  --border-gold: rgba(247, 243, 229, 0.3);
+
+  /* Gold glow */
+  --glow-gold: 0 0 12px rgba(247, 243, 229, 0.35), 0 0 28px rgba(247, 243, 229, 0.12);
+  --glow-gold-sm: 0 0 8px rgba(247, 243, 229, 0.25), 0 0 16px rgba(247, 243, 229, 0.08);
+  --glow-gold-lg: 0 0 20px rgba(247, 243, 229, 0.45), 0 0 48px rgba(247, 243, 229, 0.18);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background-color: var(--navy-900);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--navy-900);
+  color: var(--text-primary);
+  font-family: var(--font-sans), sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Typography */
+h1, h2, h3 {
+  font-family: var(--font-display), serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+h1 {
+  text-shadow: 0 0 24px rgba(247, 243, 229, 0.25), 0 0 48px rgba(247, 243, 229, 0.08);
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), monospace;
+}
+
+/* Gold glow utilities */
+.glow-gold {
+  box-shadow: var(--glow-gold);
+}
+
+.glow-gold-sm {
+  box-shadow: var(--glow-gold-sm);
+}
+
+.glow-gold-lg {
+  box-shadow: var(--glow-gold-lg);
+}
+
+.text-glow-gold {
+  text-shadow: 0 0 12px rgba(201, 168, 76, 0.6), 0 0 24px rgba(201, 168, 76, 0.2);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--navy-800);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--navy-500);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-600);
 }

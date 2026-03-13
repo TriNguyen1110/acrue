@@ -1,0 +1,122 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  preferences  Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  watchlist          Watchlist[]
+  alerts             Alert[]
+  signalScores       SignalScore[]
+  portfolioHoldings  PortfolioHolding[]
+  portfolioSnapshots PortfolioSnapshot[]
+  simulations        Simulation[]
+}
+
+model Watchlist {
+  id      String   @id @default(uuid())
+  userId  String
+  ticker  String
+  addedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ticker])
+  @@index([userId])
+}
+
+model Alert {
+  id          String   @id @default(uuid())
+  userId      String
+  ticker      String
+  type        String   // price_change | volume_spike | volatility
+  message     String
+  severity    String   // low | medium | high
+  triggeredAt DateTime @default(now())
+  read        Boolean  @default(false)
+  rules       Json     @default("{}")  // { threshold, cooldown_minutes, rule_type }
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model NewsArticle {
+  id             String   @id @default(uuid())
+  tickers        String[]
+  headline       String
+  summary        String?
+  sentiment      String?  // positive | neutral | negative
+  sentimentScore Float?
+  impact         String?  // low | medium | high
+  source         String?
+  publishedAt    DateTime?
+  insight        String?
+  createdAt      DateTime @default(now())
+
+  @@index([publishedAt(sort: Desc)])
+}
+
+model SignalScore {
+  id         String   @id @default(uuid())
+  ticker     String
+  userId     String
+  score      Float
+  direction  String   // bullish | bearish
+  confidence String   // low | medium | high
+  breakdown  Json     // { price_momentum, volume_anomaly, volatility, news_sentiment }
+  scoredAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([ticker, scoredAt(sort: Desc)])
+  @@index([userId, scoredAt(sort: Desc)])
+}
+
+model PortfolioHolding {
+  id        String   @id @default(uuid())
+  userId    String
+  ticker    String
+  shares    Float
+  avgCost   Float
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ticker])
+  @@index([userId])
+}
+
+model PortfolioSnapshot {
+  id        String   @id @default(uuid())
+  userId    String
+  holdings  Json     // [{ ticker, shares, avgCost, currentPrice, pnlPct }]
+  metrics   Json     // { expectedReturn, volatility, sharpeRatio, diversificationScore }
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model Simulation {
+  id        String   @id @default(uuid())
+  userId    String
+  scenario  Json     // { type, magnitude, durationDays, runs }
+  results   Json     // { expectedOutcome, upsideP90, downsideP10, probabilityBands }
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+}

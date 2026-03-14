@@ -4,9 +4,11 @@
 
 | Doc | What it covers |
 |-----|---------------|
+| `.claude/DESIGN.md` | Full design system — colors, fonts, effects, component patterns |
 | `docs/USE_CASES.md` | 5 use cases with flows, actors, exceptions |
 | `docs/API_PLAN.md` | All API endpoints, request/response shapes, background jobs, Node.js libraries |
 | `docs/DB_PLAN.md` | PostgreSQL schema, indexes, service-to-table mapping |
+| `docs/DECISIONS.md` | Architectural decisions and tradeoffs log |
 
 ---
 
@@ -17,7 +19,7 @@
 - **DB:** PostgreSQL (`pg`)
 - **Cache:** Redis (`ioredis`)
 - **Auth:** JWT (`jsonwebtoken` + `bcryptjs`)
-- **Market Data:** `yahoo-finance2`
+- **Market Data:** Finnhub REST API (`FINNHUB_API_KEY` env var) — replaces `yahoo-finance2`
 - **Indicators:** `technicalindicators`
 - **Stats/Math:** `simple-statistics`, `ml-matrix`
 - **NLP:** `sentiment`, `natural`
@@ -45,12 +47,23 @@ app/
     signals/
     portfolio/
   providers.tsx           ← HeroUIProvider wrapper
-lib/                      ← Business logic services
-  db.ts                   ← Prisma client (infrastructure)
-  cache.ts                ← Redis client (infrastructure)
+lib/                      ← Infrastructure only (no business logic)
+  db.ts                   ← Prisma client
+  cache.ts                ← Redis client
+  rateLimiter.ts          ← Token bucket rate limiter (55 req/min, 3-tier priority queue)
+  finnhub/                ← Finnhub API data access layer
+    client.ts             ← Base fetch routed through rateLimiter
+    quote.ts              ← Live quotes (60s TTL)
+    chart.ts              ← OHLCV candles (interval-based TTL)
+    search.ts             ← Ticker/name search (1h TTL)
+    summary.ts            ← Company profile + analyst rating (6h TTL)
+    screener.ts           ← Gainers/losers/most-active from S&P 100 universe
+    index.ts              ← Barrel export
+services/                 ← Business logic (reads from lib/, writes to DB/Cache)
+  tickerScheduler.ts      ← Scores tickers by importance + staleness + volatility + volume spike
   auth.ts
   marketData.ts
-  search.ts
+  search.ts               ← Tag-based recommender + autocomplete (Finnhub candidates re-ranked by sector/industry/quoteType, max 10)
   notifications.ts        ← includes node-cron scheduler
   news.ts
   signals.ts
@@ -87,13 +100,13 @@ docs/                     ← Planning docs
 ```
 Frontend → API Routes → Services → Infrastructure (DB + Cache)
                                          │
-                              External APIs (Yahoo Finance, Polygon, NewsAPI)
+                              External APIs (Finnhub, NewsAPI)
 ```
 
 - **Frontend** only talks to API Routes
-- **API Routes** only call lib services
-- **Services** read/write DB and Cache
-- **Market Data + News** call External APIs
+- **API Routes** only call `services/`
+- **Services** contain business logic, read/write DB and Cache
+- **`lib/`** is infrastructure only — DB client, Redis client, rate limiter, Finnhub data access
 - **Notification System** runs background cron jobs triggering other services
 
 ---
@@ -102,8 +115,8 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 
 | Day | Task 1 (Core Logic) | Task 2 (Routes + UI) | Status |
 |-----|---------------------|----------------------|--------|
-| 1 | DB + Redis + migrations | Auth service + routes + pages | `[ ]` |
-| 2 | Market Data service + caching | Watchlist service + routes + page | `[ ]` |
+| 1 | DB + Redis + migrations | Auth service + routes + pages | `[x]` |
+| 2 | Market Data service + caching | Watchlist service + routes + page | `[x]` |
 | 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[ ]` |
 | 4 | News NLP + sentiment pipeline | News routes + page | `[ ]` |
 | 5 | Signals scoring logic | Signals routes + page | `[ ]` |
@@ -179,6 +192,8 @@ This project is a hiring showcase — commits are part of the story.
 
 Record important architectural or implementation decisions here as the project evolves. This feeds into the final README and any writeup.
 
+Full tradeoff notes in `docs/DECISIONS.md`.
+
 | Date | Decision | Reason |
 |------|----------|--------|
 | 2026-03-11 | No Python microservice — all compute in Node | Simpler stack, Node libraries sufficient for this scale |
@@ -189,6 +204,44 @@ Record important architectural or implementation decisions here as the project e
 | 2026-03-11 | No `assets` table — fetch live from Yahoo Finance, cache in Redis | Avoids stale data, reduces DB complexity |
 | 2026-03-11 | `alert_rules` stored as JSONB inside `alerts` | No need for separate table at this scale |
 | 2026-03-11 | Scheduler lives inside Notification System | Keeps background jobs co-located with the service that owns them |
+| 2026-03-13 | Replaced `yahoo-finance2` with Finnhub REST API | Yahoo Finance unofficial API is unreliable; Finnhub free tier provides real-time data + WebSocket |
+| 2026-03-13 | Token bucket rate limiter with scored ticker scheduler | Finnhub free tier capped at 60 req/min; priority queue maximizes data freshness within budget |
+| 2026-03-13 | Split `lib/` (infrastructure) from `services/` (business logic) | `lib/` = DB, Redis, rate limiter, Finnhub data access. `services/` = auth, signals, portfolio, etc. Cleaner separation of concerns |
+
+---
+
+## Design System
+
+### Colors
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `gold-400` | `#F7F3E5` | Primary accent — text, icons, borders |
+| `gold-500` | `#EDE4CC` | Slightly darker gold for gradients |
+| `gold-600` | `#D4CCAE` | Muted gold, button gradient start |
+| `navy-900` | `#050D1A` | Page background |
+| `navy-800` | `#0A1628` | Card / surface background |
+| `navy-700` | `#0F1F38` | Elevated surface |
+| `navy-600` | `#152848` | Border, divider |
+
+### Typography
+| Role | Font | Weight |
+|------|------|--------|
+| Headings (`h1`, `h2`, `h3`) | DM Serif Display | 400 |
+| Body | Inter | 300–600 |
+| Numbers / code | DM Mono | 300–500 |
+
+### Effects
+- **Gold glow on text** — `text-shadow: 0 0 24px rgba(247,243,229,0.25), 0 0 48px rgba(247,243,229,0.08)` — applied to all `h1` globally
+- **Gold glow on elements** — use `.glow-gold`, `.glow-gold-sm`, `.glow-gold-lg` utility classes
+- **Gold border glow** — `rgba(247,243,229,0.15)` for borders, `rgba(247,243,229,0.1)` for dividers
+- **Background radial** — `radial-gradient(ellipse 60% 40% at 50% 0%, rgba(247,243,229,0.07) 0%, transparent 70%)` on auth pages
+
+### Vibe
+- Dark, data-dense, high-tech but refined — think Bloomberg meets old money
+- Navy is the foundation, gold is used sparingly as accent only
+- Buttons: gold gradient (`#EDE4CC` → `#F7F3E5`) with gold glow, dark navy text
+- Inputs: focus state uses gold border + subtle gold ring
+- Sidebar brand: centered, `Acrue` in DM Serif Display, slogan "Invest with clarity"
 
 ---
 

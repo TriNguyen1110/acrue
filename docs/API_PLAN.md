@@ -23,8 +23,8 @@
 
                ┌──────────────────────────────────────────┐
                ▼                    ▼                     ▼
-        Yahoo Finance        Alpha Vantage / Polygon    NewsAPI
-        (yahoo-finance2)
+        Finnhub REST API     rateLimiter.ts            NewsAPI
+        (lib/finnhub/)       + tickerScheduler.ts
 ```
 
 **Key design decision**: All computation (signals, portfolio math, NLP sentiment) runs inside Node.js using `simple-statistics`, `ml-matrix`, and lightweight NLP libraries. No separate microservice.
@@ -307,7 +307,7 @@ WS /ws/quotes      — live price ticks for watchlist assets
 
 | Job | Frequency | Action |
 |-----|-----------|--------|
-| Market data ingest | Every 1 min (market hours) | Pull quotes via `yahoo-finance2`, update Redis cache |
+| Market data ingest | Every 1 min (market hours) | Score tickers via `tickerScheduler` (importance + staleness + volatility + volume spike), pull quotes via Finnhub through `rateLimiter`, update Redis cache |
 | Alert detection | Every 5 min | Compute anomaly scores in Node, write & push alerts |
 | News ingest | Every 15 min | Fetch NewsAPI, run Node NLP enrichment, store |
 | Signal scoring | Every 30 min | Recompute scores for all watchlist assets |
@@ -319,7 +319,9 @@ WS /ws/quotes      — live price ticks for watchlist assets
 
 | Purpose | Library |
 |---------|---------|
-| Market data | `yahoo-finance2` |
+| Market data | Finnhub REST API (`lib/finnhub/`) |
+| Rate limiting | `lib/rateLimiter.ts` — token bucket, 55 req/min, 3-tier priority queue |
+| Ticker scheduling | `lib/tickerScheduler.ts` — scores tickers by importance + staleness + volatility + volume spike |
 | Technical indicators | `technicalindicators` |
 | Statistics / z-score | `simple-statistics` |
 | Matrix math (portfolio) | `ml-matrix` |

@@ -7,6 +7,19 @@ datasource db {
   provider = "postgresql"
 }
 
+model Asset {
+  ticker       String   @id
+  name         String
+  exchange     String
+  type         String   // Common Stock | ETP | etc.
+  sector       String?  // populated lazily from Finnhub profile on first watchlist add
+  industry     String?
+  watcherCount Int      @default(0) // denormalised — inc/dec on watchlist add/remove
+  updatedAt    DateTime @updatedAt
+
+  @@index([name])
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -16,6 +29,7 @@ model User {
 
   watchlist          Watchlist[]
   alerts             Alert[]
+  alertRules         AlertRule[]
   signalScores       SignalScore[]
   portfolioHoldings  PortfolioHolding[]
   portfolioSnapshots PortfolioSnapshot[]
@@ -49,6 +63,21 @@ model Alert {
 
   @@index([userId])
   @@index([userId, read])
+}
+
+model AlertRule {
+  id              String   @id @default(uuid())
+  userId          String
+  ticker          String
+  ruleType        String   // price_change | volume_spike | volatility
+  threshold       Float    // price_change: % move; volume_spike: z-score; volatility: annualised stddev %
+  cooldownMinutes Int      @default(60)
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ticker, ruleType])
+  @@index([userId])
 }
 
 model NewsArticle {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, apiError, ApiAuthError } from "@/lib/apiAuth";
-import { getQuote } from "@/lib/finnhub";
+import { getQuote, PRIORITY } from "@/lib/finnhub";
 import { getAssetSummary } from "@/lib/finnhub";
 
 export async function GET(
@@ -13,7 +13,7 @@ export async function GET(
     const upper = ticker.toUpperCase();
 
     const [quote, summary] = await Promise.all([
-      getQuote(upper, "high"),
+      getQuote(upper, PRIORITY.USER),
       getAssetSummary(upper),
     ]);
 

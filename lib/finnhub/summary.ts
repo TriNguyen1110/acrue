@@ -1,5 +1,5 @@
 import { redis } from "@/lib/cache";
-import { finnhubGet } from "./client";
+import { finnhubGet, PRIORITY } from "./client";
 
 const SUMMARY_TTL = 21600; // 6h
 
@@ -55,9 +55,9 @@ export async function getAssetSummary(ticker: string): Promise<AssetSummary> {
   // Fetch profile, recommendations, and price target in parallel
   // All are high priority — triggered when user opens an asset detail page
   const [profile, recommendations, priceTarget] = await Promise.all([
-    finnhubGet<FinnhubProfile>("/stock/profile2", { symbol: upper }, "high"),
-    finnhubGet<FinnhubRecommendation[]>("/stock/recommendation", { symbol: upper }, "high"),
-    finnhubGet<FinnhubPriceTarget>("/stock/price-target", { symbol: upper }, "high"),
+    finnhubGet<FinnhubProfile>("/stock/profile2", { symbol: upper }, PRIORITY.USER),
+    finnhubGet<FinnhubRecommendation[]>("/stock/recommendation", { symbol: upper }, PRIORITY.USER),
+    finnhubGet<FinnhubPriceTarget>("/stock/price-target", { symbol: upper }, PRIORITY.USER),
   ]);
 
   const latestRec = Array.isArray(recommendations) ? recommendations[0] : null;

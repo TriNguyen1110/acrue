@@ -5,6 +5,7 @@ import {
   getDayGainers,
   getDayLosers,
   getMostActives,
+  PRIORITY,
 } from "@/lib/finnhub";
 import type { Quote, Candle, ChartInterval } from "@/types";
 import type { ScreenerResult } from "@/lib/finnhub/screener";
@@ -69,7 +70,7 @@ export async function getWatchlistQuotes(tickers: string[]): Promise<Quote[]> {
     tickers.map(async (ticker): Promise<Quote | null> => {
       const upper = ticker.toUpperCase();
       try {
-        return await getQuote(upper, "high");
+        return await getQuote(upper, PRIORITY.USER);
       } catch {
         // Live fetch failed — try to serve stale cached data
         const stale = await redis.get(`quote:${upper}`);

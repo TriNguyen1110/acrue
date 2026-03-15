@@ -54,24 +54,86 @@ A simple substring match on ticker/name returns results in arbitrary order. For 
 
 ---
 
-## 2026-03-13 — Token bucket rate limiter with 3-tier priority queue (`lib/rateLimiter.ts`)
+## 2026-03-14 — Alert retention policy to prevent unbounded DB growth
 
-**Decision:** Build a token bucket rate limiter with HIGH / MEDIUM / LOW priority tiers to manage Finnhub's 60 req/min limit across all callers (user requests, cron jobs, background scoring).
+**Decision:** The nightly cron (03:00 UTC) purges stale alerts in two passes:
+1. **TTL delete** — read alerts older than 30 days, unread alerts older than 90 days
+2. **Per-user cap** — if a user still has >500 rows after the TTL pass, delete oldest rows (read-first) until they're at the limit
 
 **Why:**
-Without a rate limiter, concurrent user requests + background cron jobs will burst past 60 req/min and receive 429 errors from Finnhub. A simple retry loop would make things worse. A token bucket with priority tiers ensures user-facing requests are never starved by background work.
+Alert detection runs every 5 minutes with a 60-minute cooldown per rule type. A user with 10 tickers and 3 default rules can generate up to ~720 rows/day. Without a retention policy, the alerts table grows unboundedly — ~260,000 rows/user/year at that rate, which would exhaust a free-tier Postgres allocation (Supabase 500MB) within weeks for an active user base.
+
+**Why two separate TTLs (30 days read, 90 days unread):**
+Read alerts have already delivered their value — 30 days is sufficient for historical review. Unread alerts get a longer window because a user who hasn't logged in for a month should still see their missed notifications rather than losing them silently.
+
+**Why the 500-row cap:**
+A hard cap backstops edge cases: a user with a very large watchlist or an anomalous market period (e.g. a flash crash triggering every rule simultaneously) can still spike well above what the TTL alone would catch. 500 rows per user is enough history for the UI's pagination and reference needs.
+
+**Tradeoffs:**
+- The cap deletes oldest rows first (read before unread), not by importance — in theory a very old high-severity alert could be evicted before a recent low-severity one. Acceptable since the TTL already keeps rows under control in the normal case; the cap is only a safety net.
+- The retention job runs in-process with `node-cron` — if the server is down at 03:00 UTC it won't run until the next day. Acceptable; a one-day delay in cleanup has no user-visible impact.
+
+---
+
+## 2026-03-14 — Alert feed enriched with asset classification for ticker-level filtering
+
+**Decision:** `getUserAlerts` joins alert rows with two additional data sources before returning:
+1. **`prisma.asset` table** — provides `sector`, `industry`, and `type` (EQUITY / ETP) for each unique ticker in the page
+2. **Redis `finnhub:profile:${ticker}` cache** — provides `marketCapitalization` (converted to absolute USD) for cap tier filtering
+
+These fields are attached to each `Alert` DTO and used client-side in `AlertsFeed.tsx` to generate a dynamic second filter row (sector chips, cap tier chips, ETF chip) derived from the current page's alert data.
+
+**Why client-side chips instead of server-side filter params:**
+The classification filter values aren't known until alerts are loaded — you can't filter by "Technology" unless you first know that some of the user's alerts have sector = "Technology". Generating chips dynamically from the response data avoids a separate metadata prefetch call and keeps the filter row always in sync with what's actually on screen.
+
+**Why Redis for market cap instead of the Asset table:**
+The `Asset` schema stores `sector` and `industry` (populated lazily from Finnhub profiles on watchlist add) but not `marketCap` — market cap changes continuously and adding it to the DB would require either frequent polling or a migration that adds a stale float column. The Finnhub profile cache at `finnhub:profile:${ticker}` (6h TTL) already stores `marketCapitalization` in millions — reading from there is zero-cost and reasonably fresh.
+
+**Tradeoffs:**
+- Sector/industry data is only populated for tickers that have been on at least one user's watchlist — cold tickers (never added) won't have classification chips. Acceptable since alerts can only be generated for watchlist tickers anyway.
+- Market cap is absent if the Redis profile cache has expired or was never populated. The cap tier chip simply doesn't appear for that ticker rather than showing a stale value.
+
+---
+
+## 2026-03-14 — Continuous float score replaces 3-tier string priority in rate limiter
+
+**Decision:** Refactored `lib/rateLimiter.ts` from three named tiers (`"high"` / `"medium"` / `"low"`) to a single sorted queue keyed by a continuous float score `0.0–1.0`.
+
+**Why:**
+The ticker scheduler already computes a continuous urgency score (importance + staleness + volatility + volume spike). Under the 3-tier model, every scheduler-enqueued request was bucketed into `"medium"` regardless of its actual score — two tickers with scores 0.85 and 0.12 would sit in the same tier and drain in FIFO order, defeating the purpose of the scoring formula.
+
+With a single numeric score queue, the scheduler passes its computed score directly to `rateLimiter.enqueue(fn, score)` — higher-scored tickers genuinely pre-empt lower-scored ones within the same drain cycle.
+
+**PRIORITY constants:**
+- `PRIORITY.USER = 1.0` — user-initiated requests always pre-empt background work
+- `PRIORITY.BACKGROUND = 0.0` — screener universe fetches, profile pre-warming, etc.
+- Scheduler score `0.0–1.0` — sits between background and user priority, weighted by actual market signal
+
+**Tradeoffs:**
+- Any caller that previously passed a string priority must now pass a number — required a one-time update across all Finnhub lib files and services. No runtime behaviour changed for non-scheduler callers (they all map to `PRIORITY.USER` or `PRIORITY.BACKGROUND`).
+
+---
+
+## 2026-03-13 — Token bucket rate limiter (`lib/rateLimiter.ts`)
+
+**Decision:** Build a token bucket rate limiter with a continuous float priority score to manage Finnhub's 60 req/min limit across all callers (user requests, cron jobs, background scoring).
+
+> **Updated 2026-03-14:** Replaced 3-tier string priority (HIGH/MEDIUM/LOW) with a single sorted queue keyed by a continuous float score `0.0–1.0`. See the 2026-03-14 entry above for rationale.
+
+**Why:**
+Without a rate limiter, concurrent user requests + background cron jobs will burst past 60 req/min and receive 429 errors from Finnhub. A simple retry loop would make things worse. A token bucket with scored priority ensures user-facing requests are never starved by background work.
 
 **Design:**
-- 55 req/min capacity, not 60 — the 5 req/min headroom absorbs clock skew between our refill timer and Finnhub's server-side rate limit window. If both windows reset at slightly different times, a burst at the boundary could briefly exceed 60 from Finnhub's perspective. The 5-request buffer prevents 429 errors in that edge case without meaningfully reducing throughput.
+- 55 req/min capacity, not 60 — the 5 req/min headroom absorbs clock skew between our refill timer and Finnhub's server-side rate limit window.
 - Token refill: continuous, ~0.917 tokens/sec
-- Drain loop: runs every 1s via `setInterval`, highest priority first
-- HIGH: user-initiated requests (cache miss on quote lookup, search, asset detail)
-- MEDIUM: per-minute watchlist quote refresh (cron)
-- LOW: background jobs (signal scoring, alert candles, screener universe, profile/metrics fetches)
+- Drain loop: runs every 1s via `setInterval`, highest score first
+- `PRIORITY.USER = 1.0` — user-initiated requests
+- `PRIORITY.BACKGROUND = 0.0` — background jobs (screener, profile pre-warming)
+- Scheduler score `0.0–1.0` — between background and user, reflects actual ticker urgency
 
 **Tradeoffs:**
 - In-memory only — a server restart loses the queue state. Acceptable for a single-process Next.js app; a Redis-backed queue would be needed for multi-instance deploys.
-- No per-user fairness within a tier — a user with a 50-stock watchlist gets 50 MEDIUM slots vs a user with 5 stocks. Acceptable at this scale; a fair-share queue would add significant complexity.
+- No per-user fairness — a user with a 50-stock watchlist gets more BACKGROUND slots than a user with 5 stocks. Acceptable at this scale.
 
 ---
 

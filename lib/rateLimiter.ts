@@ -1,36 +1,40 @@
-type Priority = "high" | "medium" | "low";
+/**
+ * Token bucket rate limiter with a score-ordered priority queue.
+ *
+ * Capacity is 55 req/min (not 60) to leave a 5 req/min buffer against clock
+ * skew between our refill timer and Finnhub's server-side rate limit window.
+ *
+ * Priority is a continuous float (0.0 – 1.0). The queue drains highest score
+ * first, so callers pass their actual computed score rather than a coarse tier:
+ *
+ *   1.0  — user-initiated requests (cache misses on quote, search, asset detail)
+ *   0.0  — background jobs (screener universe refresh, profile/metrics on miss)
+ *   0–1  — tickerScheduler passes the ticker's live score directly, so a ticker
+ *           with score 0.85 preempts one with 0.40 within the same drain cycle
+ *
+ * Convenience constants exported for non-scored callers:
+ *   PRIORITY.USER       = 1.0
+ *   PRIORITY.BACKGROUND = 0.0
+ */
+
+export const PRIORITY = {
+  USER: 1.0,
+  BACKGROUND: 0.0,
+} as const;
 
 interface QueuedRequest<T = unknown> {
   fn: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (error: unknown) => void;
+  score: number;
 }
 
-const PRIORITY_ORDER: Priority[] = ["high", "medium", "low"];
-
-/**
- * Token bucket rate limiter with a 3-tier priority queue.
- *
- * Capacity is 55 req/min (not 60) to leave a 5 req/min buffer against clock skew
- * between our refill timer and Finnhub's server-side rate limit window. A burst
- * at the boundary of both windows could briefly exceed 60 from Finnhub's perspective
- * without this buffer, resulting in 429 errors.
- *
- * Priority tiers:
- *   HIGH   — user-initiated requests (cache misses on quote lookup, search, asset detail)
- *   MEDIUM — per-minute watchlist quote refresh driven by tickerScheduler
- *   LOW    — background jobs: signal scoring candles, alert candles, screener universe,
- *            profile/metrics fetches on cache miss
- *
- * Within each tier requests are processed FIFO. tickerScheduler pre-sorts MEDIUM
- * enqueues by score so FIFO within MEDIUM still yields priority order.
- */
 class ApiRateLimiter {
   private tokens: number;
   private readonly maxTokens: number;
   private readonly tokensPerMs: number;
   private lastRefill: number;
-  private readonly queues: Record<Priority, QueuedRequest[]>;
+  private queue: QueuedRequest[] = [];
   private drainTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(maxRequestsPerMinute = 55) {
@@ -38,7 +42,6 @@ class ApiRateLimiter {
     this.tokens = maxRequestsPerMinute;
     this.tokensPerMs = maxRequestsPerMinute / 60_000;
     this.lastRefill = Date.now();
-    this.queues = { high: [], medium: [], low: [] };
   }
 
   private refill(): void {
@@ -50,26 +53,16 @@ class ApiRateLimiter {
     this.lastRefill = now;
   }
 
-  private nextItem(): QueuedRequest | null {
-    for (const p of PRIORITY_ORDER) {
-      if (this.queues[p].length > 0) return this.queues[p].shift()!;
-    }
-    return null;
-  }
-
-  private totalQueued(): number {
-    return PRIORITY_ORDER.reduce((n, p) => n + this.queues[p].length, 0);
-  }
-
   private drain(): void {
     this.refill();
-    while (this.tokens >= 1) {
-      const item = this.nextItem();
-      if (!item) break;
+    // Sort descending by score — highest priority drains first
+    this.queue.sort((a, b) => b.score - a.score);
+    while (this.tokens >= 1 && this.queue.length > 0) {
+      const item = this.queue.shift()!;
       this.tokens -= 1;
       item.fn().then(item.resolve).catch(item.reject);
     }
-    if (this.totalQueued() === 0 && this.drainTimer !== null) {
+    if (this.queue.length === 0 && this.drainTimer !== null) {
       clearInterval(this.drainTimer);
       this.drainTimer = null;
     }
@@ -80,23 +73,19 @@ class ApiRateLimiter {
     this.drainTimer = setInterval(() => this.drain(), 1_000);
   }
 
-  enqueue<T>(fn: () => Promise<T>, priority: Priority = "medium"): Promise<T> {
+  enqueue<T>(fn: () => Promise<T>, score: number = 0.5): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      (this.queues[priority] as QueuedRequest<T>[]).push({ fn, resolve, reject });
+      (this.queue as QueuedRequest<T>[]).push({ fn, resolve, reject, score });
       this.scheduleDrain();
       this.drain(); // immediate attempt if tokens are available
     });
   }
 
-  stats(): { tokens: number; queued: Record<Priority, number> } {
+  stats(): { tokens: number; queued: number } {
     this.refill();
     return {
       tokens: Math.floor(this.tokens),
-      queued: {
-        high: this.queues.high.length,
-        medium: this.queues.medium.length,
-        low: this.queues.low.length,
-      },
+      queued: this.queue.length,
     };
   }
 }

@@ -3,18 +3,60 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { useState, useEffect } from "react";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "⬡" },
-  { href: "/watchlist", label: "Watchlist", icon: "◈" },
-  { href: "/alerts", label: "Alerts", icon: "◉" },
-  { href: "/news", label: "News", icon: "◎" },
-  { href: "/signals", label: "Signals", icon: "◆" },
-  { href: "/portfolio", label: "Portfolio", icon: "◇" },
+  { href: "/watchlist", label: "Watchlist",  icon: "◈" },
+  { href: "/alerts",    label: "Alerts",     icon: "◉" },
+  { href: "/news",      label: "News",       icon: "◎" },
+  { href: "/signals",   label: "Signals",    icon: "◆" },
+  { href: "/portfolio", label: "Portfolio",  icon: "◇" },
 ];
+
+function useUnreadAlerts() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    async function fetch_() {
+      try {
+        const res = await fetch("/api/v1/alerts/unread");
+        if (!res.ok) return;
+        const data = await res.json();
+        setCount(typeof data.count === "number" ? data.count : 0);
+      } catch {
+        // silently fail — badge just shows nothing
+      }
+    }
+
+    fetch_();
+    const interval = setInterval(fetch_, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return count;
+}
+
+function UnreadBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="ml-auto min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold leading-none"
+      style={{
+        background: "#ef4444",
+        color: "#fff",
+        boxShadow: "0 0 8px rgba(239,68,68,0.5)",
+        padding: "0 4px",
+      }}
+    >
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const unreadAlerts = useUnreadAlerts();
 
   return (
     <aside
@@ -41,6 +83,8 @@ export default function Sidebar() {
       <nav className="flex-1 px-3 py-4 space-y-0.5">
         {NAV.map(({ href, label, icon }) => {
           const active = pathname === href;
+          const isAlerts = href === "/alerts";
+
           return (
             <Link
               key={href}
@@ -54,14 +98,25 @@ export default function Sidebar() {
             >
               <span className="text-base w-5 text-center">{icon}</span>
               <span className="tracking-wide">{label}</span>
+
+              {/* Unread badge on Alerts */}
+              {isAlerts && !active && (
+                <UnreadBadge count={unreadAlerts} />
+              )}
+
+              {/* Active indicator bar */}
               {active && (
-                <span
-                  className="ml-auto w-1 h-4 rounded-full"
-                  style={{
-                    background: "#d4ccae",
-                    boxShadow: "0 0 8px rgba(247,243,229,0.8)",
-                  }}
-                />
+                <>
+                  {/* Still show badge even when active */}
+                  {isAlerts && <UnreadBadge count={unreadAlerts} />}
+                  <span
+                    className="ml-auto w-1 h-4 rounded-full"
+                    style={{
+                      background: "#d4ccae",
+                      boxShadow: "0 0 8px rgba(247,243,229,0.8)",
+                    }}
+                  />
+                </>
               )}
             </Link>
           );

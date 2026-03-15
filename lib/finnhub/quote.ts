@@ -1,5 +1,5 @@
 import { redis } from "@/lib/cache";
-import { finnhubGet } from "./client";
+import { finnhubGet, PRIORITY } from "./client";
 import type { Quote } from "@/types";
 
 const QUOTE_TTL = 60;      // 1 min — live price data
@@ -46,7 +46,7 @@ async function fetchProfile(ticker: string): Promise<FinnhubProfile | null> {
   const data = await finnhubGet<FinnhubProfile>(
     "/stock/profile2",
     { symbol: ticker },
-    "low" // profile is slow-changing; background priority is fine
+    PRIORITY.BACKGROUND // profile is slow-changing; background priority is fine
   );
   if (!data?.name) return null;
 
@@ -62,7 +62,7 @@ async function fetchMetrics(ticker: string): Promise<FinnhubMetricData | null> {
   const data = await finnhubGet<{ metric: FinnhubMetricData }>(
     "/stock/metric",
     { symbol: ticker, metric: "all" },
-    "low"
+    PRIORITY.BACKGROUND
   );
   if (!data?.metric) return null;
 
@@ -109,7 +109,7 @@ function getMarketState(): Quote["marketState"] {
  */
 export async function getQuote(
   ticker: string,
-  priority: "high" | "medium" | "low" = "medium"
+  score: number = 0.5
 ): Promise<Quote> {
   const upper = ticker.toUpperCase();
   const cacheKey = `quote:${upper}`;
@@ -118,7 +118,7 @@ export async function getQuote(
   if (cached) return JSON.parse(cached) as Quote;
 
   const [raw, profile, metrics] = await Promise.all([
-    finnhubGet<FinnhubQuote>("/quote", { symbol: upper }, priority),
+    finnhubGet<FinnhubQuote>("/quote", { symbol: upper }, score),
     fetchProfile(upper),
     fetchMetrics(upper),
   ]);
@@ -163,8 +163,8 @@ export async function getQuote(
 
 export async function getQuotes(
   tickers: string[],
-  priority: "high" | "medium" | "low" = "medium"
+  score: number = 0.5
 ): Promise<Quote[]> {
   if (tickers.length === 0) return [];
-  return Promise.all(tickers.map((t) => getQuote(t, priority)));
+  return Promise.all(tickers.map((t) => getQuote(t, score)));
 }

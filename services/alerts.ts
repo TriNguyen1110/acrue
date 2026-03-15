@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
-import { getIntradayCandles, getVolumeArray, getDailyReturns } from "@/services/marketData";
+import { redis } from "@/lib/cache";
+import { getIntradayCandles, getVolumeArray, getDailyReturns, getClosePrices } from "@/services/marketData";
 import { getQuote } from "@/lib/finnhub";
+import { RSI, EMA } from "technicalindicators";
 import type {
   Alert,
   AlertRuleConfig,
@@ -14,31 +16,78 @@ import type {
 // ── Default rule thresholds (used when no user-defined rule exists) ────────────
 
 const DEFAULTS: Record<AlertType, { threshold: number; cooldownMinutes: number }> = {
-  price_change: { threshold: 5.0, cooldownMinutes: 60 },  // 5% move
-  volume_spike: { threshold: 2.5, cooldownMinutes: 60 },  // 2.5σ above mean
+  price_change: { threshold: 5.0,  cooldownMinutes: 60 },  // 5% move
+  volume_spike: { threshold: 2.5,  cooldownMinutes: 60 },  // 2.5σ above mean
   volatility:   { threshold: 40.0, cooldownMinutes: 120 }, // 40% annualised vol
+  rsi:          { threshold: 70.0, cooldownMinutes: 120 }, // RSI overbought/oversold
+  ema_cross:    { threshold: 0,    cooldownMinutes: 240 }, // EMA crossover signal
+  price_level:  { threshold: 0,    cooldownMinutes: 60 },  // Absolute price target
 };
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
+export interface AlertFilters {
+  type?: AlertType;
+  severity?: AlertSeverity;
+}
+
 export async function getUserAlerts(
   userId: string,
   page = 1,
-  limit = 20
+  limit = 20,
+  filters: AlertFilters = {}
 ): Promise<PaginatedAlerts> {
   const skip = (page - 1) * limit;
+  const where = {
+    userId,
+    ...(filters.type     ? { type:     filters.type }     : {}),
+    ...(filters.severity ? { severity: filters.severity } : {}),
+  };
   const [alerts, total] = await Promise.all([
     prisma.alert.findMany({
-      where: { userId },
+      where,
       orderBy: { triggeredAt: "desc" },
       skip,
       take: limit,
     }),
-    prisma.alert.count({ where: { userId } }),
+    prisma.alert.count({ where }),
   ]);
 
+  // Enrich with asset metadata and market cap for ticker classification filters
+  const tickers = [...new Set(alerts.map((a) => a.ticker))];
+
+  const [assets, profiles] = await Promise.all([
+    tickers.length > 0
+      ? prisma.asset.findMany({
+          where: { ticker: { in: tickers } },
+          select: { ticker: true, sector: true, industry: true, type: true },
+        })
+      : Promise.resolve([]),
+    tickers.length > 0
+      ? Promise.all(
+          tickers.map((t) =>
+            redis.get(`finnhub:profile:${t}`).then((v) => ({ ticker: t, raw: v }))
+          )
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const assetMap = new Map<string, { sector: string | null; industry: string | null; type: string }>(
+    assets.map((a) => [a.ticker, a])
+  );
+  const marketCapMap = new Map<string, number>();
+  for (const { ticker, raw } of profiles) {
+    if (!raw) continue;
+    try {
+      const p = JSON.parse(raw) as { marketCapitalization?: number };
+      if (p.marketCapitalization) marketCapMap.set(ticker, p.marketCapitalization * 1_000_000);
+    } catch {
+      // ignore malformed cache entries
+    }
+  }
+
   return {
-    alerts: alerts.map(toAlertDTO),
+    alerts: alerts.map((a) => toAlertDTO(a, assetMap, marketCapMap)),
     page,
     limit,
     total,
@@ -54,7 +103,7 @@ export async function getUnreadAlerts(userId: string): Promise<UnreadAlertsRespo
 
   return {
     count: alerts.length,
-    alerts: alerts.map(toAlertDTO),
+    alerts: alerts.map((a) => toAlertDTO(a)),
   };
 }
 
@@ -153,12 +202,13 @@ export async function detectAlertsForTicker(
 ): Promise<DetectedAlert[]> {
   const detected: DetectedAlert[] = [];
 
-  // Fetch quote, intraday candles, volume history, and log returns in parallel
-  const [quote, candles, volumes, returns] = await Promise.all([
-    getQuote(ticker, "medium").catch(() => null),
+  // Fetch all data needed for detection in parallel
+  const [quote, candles, volumes, returns, closes] = await Promise.all([
+    getQuote(ticker, 0.5).catch(() => null),
     getIntradayCandles(ticker, "5m", 24).catch(() => []),
     getVolumeArray(ticker, 30).catch(() => []),
     getDailyReturns(ticker, 20).catch(() => []),
+    getClosePrices(ticker, 60).catch(() => []),  // 60 days needed for EMA(21) warmup
   ]);
 
   if (!quote) return [];
@@ -217,6 +267,97 @@ export async function detectAlertsForTicker(
         message: `${ticker} 20-day annualised volatility is ${annualisedVol.toFixed(1)}% (above ${volRule.threshold}% threshold)`,
         severity: classifyVolatilitySeverity(annualisedVol, volRule.threshold),
         rules: { ruleType: "volatility", threshold: volRule.threshold, cooldownMinutes: volRule.cooldownMinutes },
+      });
+    }
+  }
+
+  // ── RSI ───────────────────────────────────────────────────────────────────
+  // Fires when RSI(14) crosses into overbought (>70) or oversold (<30) territory.
+  // "Cross into" means the previous period was on the other side of the threshold —
+  // this avoids repeatedly re-alerting while RSI stays deeply overbought/oversold.
+  const rsiRule = rules.get("rsi") ?? DEFAULTS.rsi;
+  if (closes.length >= 15) {
+    const rsiValues = RSI.calculate({ values: closes, period: 14 });
+    if (rsiValues.length >= 2) {
+      const prev = rsiValues[rsiValues.length - 2];
+      const curr = rsiValues[rsiValues.length - 1];
+      const overbought = rsiRule.threshold;       // default 70
+      const oversold   = 100 - overbought;        // default 30
+
+      if (prev < overbought && curr >= overbought) {
+        detected.push({
+          ticker,
+          type: "rsi",
+          message: `${ticker} RSI(14) entered overbought territory at ${curr.toFixed(1)} (above ${overbought})`,
+          severity: curr >= overbought + 5 ? "high" : "medium",
+          rules: { ruleType: "rsi", threshold: rsiRule.threshold, cooldownMinutes: rsiRule.cooldownMinutes },
+        });
+      } else if (prev > oversold && curr <= oversold) {
+        detected.push({
+          ticker,
+          type: "rsi",
+          message: `${ticker} RSI(14) entered oversold territory at ${curr.toFixed(1)} (below ${oversold})`,
+          severity: curr <= oversold - 5 ? "high" : "medium",
+          rules: { ruleType: "rsi", threshold: rsiRule.threshold, cooldownMinutes: rsiRule.cooldownMinutes },
+        });
+      }
+    }
+  }
+
+  // ── EMA crossover ─────────────────────────────────────────────────────────
+  // Fires when EMA(9) crosses EMA(21) — a classic momentum signal.
+  // Golden cross (9 crosses above 21) = bullish; death cross = bearish.
+  const emaCrossRule = rules.get("ema_cross") ?? DEFAULTS.ema_cross;
+  if (closes.length >= 22) {
+    const ema9  = EMA.calculate({ values: closes, period: 9 });
+    const ema21 = EMA.calculate({ values: closes, period: 21 });
+
+    // Align the two series to the same length (EMA9 has more values than EMA21)
+    const offset = ema9.length - ema21.length;
+    const prev9  = ema9[ema9.length - 2];
+    const curr9  = ema9[ema9.length - 1];
+    const prev21 = ema21[ema21.length - 1 - offset < 0 ? 0 : ema21.length - 2];
+    const curr21 = ema21[ema21.length - 1];
+
+    const wasBelowOrEqual = prev9 <= prev21;
+    const wasAboveOrEqual = prev9 >= prev21;
+
+    if (wasBelowOrEqual && curr9 > curr21) {
+      detected.push({
+        ticker,
+        type: "ema_cross",
+        message: `${ticker} EMA(9) crossed above EMA(21) — bullish momentum signal ($${curr9.toFixed(2)} > $${curr21.toFixed(2)})`,
+        severity: "medium",
+        rules: { ruleType: "ema_cross", threshold: emaCrossRule.threshold, cooldownMinutes: emaCrossRule.cooldownMinutes },
+      });
+    } else if (wasAboveOrEqual && curr9 < curr21) {
+      detected.push({
+        ticker,
+        type: "ema_cross",
+        message: `${ticker} EMA(9) crossed below EMA(21) — bearish momentum signal ($${curr9.toFixed(2)} < $${curr21.toFixed(2)})`,
+        severity: "medium",
+        rules: { ruleType: "ema_cross", threshold: emaCrossRule.threshold, cooldownMinutes: emaCrossRule.cooldownMinutes },
+      });
+    }
+  }
+
+  // ── Price level ───────────────────────────────────────────────────────────
+  // Fires when price crosses a user-defined absolute price target.
+  // Uses previousClose as yesterday's price to detect the crossing direction.
+  const priceLevelRule = rules.get("price_level");
+  if (priceLevelRule && priceLevelRule.threshold > 0 && quote.previousClose != null && quote.previousClose > 0) {
+    const target = priceLevelRule.threshold;
+    const crossedUp   = quote.previousClose < target && quote.price >= target;
+    const crossedDown = quote.previousClose > target && quote.price <= target;
+
+    if (crossedUp || crossedDown) {
+      const dir = crossedUp ? "crossed above" : "crossed below";
+      detected.push({
+        ticker,
+        type: "price_level",
+        message: `${ticker} ${dir} your price target of $${target.toFixed(2)} (now $${quote.price.toFixed(2)})`,
+        severity: "high",  // price targets are always user-intentional — treat as high
+        rules: { ruleType: "price_level", threshold: target, cooldownMinutes: priceLevelRule.cooldownMinutes },
       });
     }
   }
@@ -312,7 +453,7 @@ export async function runAlertDetection(): Promise<void> {
             type: alert.type,
             message: alert.message,
             severity: alert.severity,
-            rules: alert.rules,
+            rules: alert.rules as object,
           },
         });
       }
@@ -345,16 +486,22 @@ function classifyVolatilitySeverity(vol: number, threshold: number): AlertSeveri
 
 // ── DTO mapper ────────────────────────────────────────────────────────────────
 
-function toAlertDTO(row: {
-  id: string;
-  ticker: string;
-  type: string;
-  message: string;
-  severity: string;
-  triggeredAt: Date;
-  read: boolean;
-  rules: unknown;
-}): Alert {
+function toAlertDTO(
+  row: {
+    id: string;
+    ticker: string;
+    type: string;
+    message: string;
+    severity: string;
+    triggeredAt: Date;
+    read: boolean;
+    rules: unknown;
+  },
+  assetMap?: Map<string, { sector: string | null; industry: string | null; type: string }>,
+  marketCapMap?: Map<string, number>
+): Alert {
+  const asset     = assetMap?.get(row.ticker);
+  const marketCap = marketCapMap?.get(row.ticker);
   return {
     id: row.id,
     ticker: row.ticker,
@@ -364,6 +511,10 @@ function toAlertDTO(row: {
     triggeredAt: row.triggeredAt.toISOString(),
     read: row.read,
     rules: (row.rules ?? {}) as AlertRuleConfig,
+    ...(asset?.sector   ? { sector:    asset.sector }    : {}),
+    ...(asset?.industry ? { industry:  asset.industry }  : {}),
+    ...(asset?.type     ? { assetType: asset.type }      : {}),
+    ...(marketCap       ? { marketCap }                  : {}),
   };
 }
 

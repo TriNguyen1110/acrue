@@ -117,7 +117,7 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 |-----|---------------------|----------------------|--------|
 | 1 | DB + Redis + migrations | Auth service + routes + pages | `[x]` |
 | 2 | Market Data service + caching | Watchlist service + routes + page | `[x]` |
-| 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[ ]` |
+| 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[x]` |
 | 4 | News NLP + sentiment pipeline | News routes + page | `[ ]` |
 | 5 | Signals scoring logic | Signals routes + page | `[ ]` |
 | 6 | Portfolio metrics + optimization | Portfolio routes + page | `[ ]` |

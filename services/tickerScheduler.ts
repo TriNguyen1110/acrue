@@ -160,7 +160,7 @@ class TickerScheduler {
     );
   }
 
-  private pickNext(): string | null {
+  private pickNext(): { ticker: string; score: number } | null {
     if (this.tickers.size === 0) return null;
 
     const now = Date.now();
@@ -173,8 +173,6 @@ class TickerScheduler {
     let bestScore = -1;
 
     for (const [ticker, meta] of this.tickers) {
-      // Skip tickers fetched too recently — avoids burning tokens on the same
-      // popular ticker every second while low-watcher tickers starve
       if (now - meta.lastFetchedAt < MIN_REFRESH_INTERVAL_MS) continue;
 
       const score = this.computeScore(meta, maxWatchers);
@@ -184,12 +182,12 @@ class TickerScheduler {
       }
     }
 
-    return bestTicker;
+    return bestTicker ? { ticker: bestTicker, score: bestScore } : null;
   }
 
   private tick(): void {
-    const ticker = this.pickNext();
-    if (!ticker) return;
+    const { ticker, score } = this.pickNext() ?? {};
+    if (!ticker || score === undefined) return;
 
     // Optimistically mark as fetching now so the next tick doesn't double-queue it
     const meta = this.tickers.get(ticker);
@@ -199,11 +197,11 @@ class TickerScheduler {
       .enqueue(
         async () => {
           const { getQuote } = await import("@/lib/finnhub");
-          const quote = await getQuote(ticker, "medium");
+          const quote = await getQuote(ticker, score);
           this.onQuoteFetched(ticker, quote);
           return quote;
         },
-        "medium"
+        score
       )
       .catch(() => {
         // Reset lastFetchedAt on failure so the ticker is retried next cycle

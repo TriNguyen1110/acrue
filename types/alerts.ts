@@ -1,4 +1,10 @@
-export type AlertType = "price_change" | "volume_spike" | "volatility";
+export type AlertType =
+  | "price_change"
+  | "volume_spike"
+  | "volatility"
+  | "rsi"
+  | "ema_cross"
+  | "price_level";
 export type AlertSeverity = "low" | "medium" | "high";
 
 export interface Alert {
@@ -10,6 +16,10 @@ export interface Alert {
   triggeredAt: string;
   read: boolean;
   rules: AlertRuleConfig;
+  sector?: string;
+  industry?: string;
+  assetType?: string;
+  marketCap?: number;
 }
 
 export interface AlertRuleConfig {

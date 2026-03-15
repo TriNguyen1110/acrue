@@ -1,5 +1,5 @@
 import { redis } from "@/lib/cache";
-import { finnhubGet } from "./client";
+import { finnhubGet, PRIORITY } from "./client";
 import type { AssetSearchResult } from "@/types";
 
 const SEARCH_TTL = 3600; // 1h — search results change slowly
@@ -36,7 +36,7 @@ export async function searchAssets(query: string): Promise<AssetSearchResult[]> 
   const data = await finnhubGet<FinnhubSearchResponse>(
     "/search",
     { q },
-    "high" // user-initiated typeahead — needs to feel instant
+    PRIORITY.USER // user-initiated typeahead — needs to feel instant
   );
 
   const assets: AssetSearchResult[] = (data.result ?? [])

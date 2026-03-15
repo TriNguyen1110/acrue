@@ -1,5 +1,5 @@
 import { redis } from "@/lib/cache";
-import { finnhubGet } from "./client";
+import { finnhubGet, PRIORITY } from "./client";
 import type { Candle, ChartInterval } from "@/types";
 
 // Intraday data expires fast; daily+ data can be cached longer
@@ -62,7 +62,7 @@ export async function getChart(
       from: String(from),
       to: String(to),
     },
-    "low" // candle fetches are background work
+    PRIORITY.BACKGROUND // candle fetches are background work
   );
 
   if (data.s === "no_data" || !data.c?.length) {

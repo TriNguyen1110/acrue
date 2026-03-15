@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { redis } from "@/lib/cache";
-import { getQuote } from "@/lib/finnhub";
+import { getQuote, PRIORITY } from "@/lib/finnhub";
 import { getWatchlistQuotes } from "@/services/marketData";
 import { tickerScheduler } from "@/services/tickerScheduler";
 import type { WatchlistItem, WatchlistEntry } from "@/types";
@@ -30,7 +30,7 @@ export async function getUserWatchlist(userId: string): Promise<WatchlistItem[]>
   const sectorMap = new Map(assets.map((a) => [a.ticker, a.sector ?? undefined]));
 
   return entries
-    .map((entry) => {
+    .map((entry): WatchlistItem | null => {
       const quote = quoteMap.get(entry.ticker);
       if (!quote) return null;
       return {
@@ -38,7 +38,7 @@ export async function getUserWatchlist(userId: string): Promise<WatchlistItem[]>
         ticker: entry.ticker,
         addedAt: entry.addedAt.toISOString(),
         quote,
-        sector: sectorMap.get(entry.ticker),
+        sector: sectorMap.get(entry.ticker) ?? undefined,
       };
     })
     .filter((item): item is WatchlistItem => item !== null);
@@ -61,7 +61,7 @@ export async function addToWatchlist(
   const upper = ticker.toUpperCase();
 
   // Validate ticker exists on Finnhub
-  const quote = await getQuote(upper, "high");
+  const quote = await getQuote(upper, PRIORITY.USER);
   if (quote.price === 0 && quote.previousClose === 0) {
     throw new TickerNotFoundError(upper);
   }
@@ -69,6 +69,17 @@ export async function addToWatchlist(
   try {
     const entry = await prisma.watchlist.create({
       data: { userId, ticker: upper },
+    });
+
+    // Auto-create default alert rules for the new ticker so the user
+    // starts receiving anomaly alerts without any manual configuration.
+    await prisma.alertRule.createMany({
+      data: [
+        { userId, ticker: upper, ruleType: "price_change", threshold: 5,    cooldownMinutes: 60 },
+        { userId, ticker: upper, ruleType: "volume_spike", threshold: 2.5,  cooldownMinutes: 60 },
+        { userId, ticker: upper, ruleType: "volatility",   threshold: 40,   cooldownMinutes: 120 },
+      ],
+      skipDuplicates: true,
     });
 
     // Register with scheduler — starts proactive refresh for this ticker

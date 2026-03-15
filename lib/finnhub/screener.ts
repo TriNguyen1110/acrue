@@ -1,5 +1,6 @@
 import { redis } from "@/lib/cache";
 import { getQuotes } from "./quote";
+import { PRIORITY } from "./client";
 import type { Quote } from "@/types";
 
 const SCREENER_TTL = 300; // 5 min — screener is a discovery widget, not a live feed
@@ -115,5 +116,5 @@ export async function getMostActives(count = 10): Promise<ScreenerResult[]> {
  */
 export async function refreshScreenerUniverse(): Promise<void> {
   // getQuotes fires all requests into the LOW queue; rate limiter handles pacing
-  getQuotes(SP100_TICKERS, "low").catch(() => null);
+  getQuotes(SP100_TICKERS, PRIORITY.BACKGROUND).catch(() => null);
 }

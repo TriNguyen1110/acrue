@@ -312,6 +312,8 @@ export default function AlertsFeed() {
   const [sort, setSort] = useState<SortKey>("newest");
 
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
+  const [showTickerPicker, setShowTickerPicker] = useState(false);
 
   const LIMIT = 20;
 
@@ -341,7 +343,11 @@ export default function AlertsFeed() {
   useEffect(() => {
     fetch("/api/v1/watchlist")
       .then((r) => r.json())
-      .then((data: unknown[]) => setHasWatchlist(Array.isArray(data) && data.length > 0))
+      .then((data: { ticker: string }[]) => {
+        const has = Array.isArray(data) && data.length > 0;
+        setHasWatchlist(has);
+        if (has) setWatchlistTickers(data.map((d) => d.ticker));
+      })
       .catch(() => setHasWatchlist(false));
   }, []);
 
@@ -409,18 +415,72 @@ export default function AlertsFeed() {
             )}
           </div>
 
-          {/* Sort */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">Sort:</span>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-              className="bg-navy-800 border border-navy-600 text-text-secondary text-xs rounded-lg px-2 py-1 outline-none hover:border-navy-500 cursor-pointer"
-            >
-              {SORTS.map((s) => (
-                <option key={s.key} value={s.key}>{s.label}</option>
-              ))}
-            </select>
+          <div className="flex items-center gap-3">
+            {/* Manage Rules button */}
+            {watchlistTickers.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowTickerPicker((v) => !v)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border"
+                  style={{
+                    background: "rgba(247,243,229,0.10)",
+                    borderColor: "rgba(247,243,229,0.35)",
+                    color: "#F7F3E5",
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
+                  Manage Rules
+                </button>
+
+                {showTickerPicker && (
+                  <>
+                    {/* click-away backdrop */}
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowTickerPicker(false)}
+                    />
+                    <div
+                      className="absolute right-0 top-full mt-1.5 z-30 rounded-xl py-1.5 min-w-[130px]"
+                      style={{
+                        background: "rgba(10,22,40,0.98)",
+                        border: "1px solid rgba(247,243,229,0.12)",
+                        backdropFilter: "blur(12px)",
+                      }}
+                    >
+                      <p className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wider">Select ticker</p>
+                      {watchlistTickers.map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => {
+                            setSelectedTicker(t);
+                            setShowTickerPicker(false);
+                          }}
+                          className="w-full text-left px-3 py-1.5 text-xs font-mono text-text-secondary hover:text-gold-400 hover:bg-navy-700/50 transition-colors"
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Sort */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted">Sort:</span>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as SortKey)}
+                className="bg-navy-800 border border-navy-600 text-text-secondary text-xs rounded-lg px-2 py-1 outline-none hover:border-navy-500 cursor-pointer"
+              >
+                {SORTS.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 

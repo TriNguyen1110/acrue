@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Button, Input, Spinner } from "@heroui/react";
+import { Button, Spinner } from "@heroui/react";
 import InfoTooltip from "@/components/ui/InfoTooltip";
 import { AlertTypeBadge } from "@/components/ui/AlertBadge";
-import type { AlertType, AlertRuleConfig } from "@/types";
+import type { AlertType } from "@/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ interface AlertRule {
 const RULE_TOOLTIPS: Record<AlertType, { term: string; explanation: string }> = {
   price_change: {
     term: "Price Change",
-    explanation: "Triggers when the stock price moves more than the threshold % from yesterday's close.",
+    explanation: "Triggers when the stock price moves more than the threshold % within the last 5-minute candle interval — catches sudden spikes, not slow daily drifts.",
   },
   volume_spike: {
     term: "Volume Spike",
@@ -58,9 +58,20 @@ const THRESHOLD_LABELS: Record<AlertType, string> = {
   price_level:  "$ price",
 };
 
-// ── Default rules to seed UI before fetch ────────────────────────────────────
+// ── System defaults (mirrors DEFAULTS in services/alerts.ts) ─────────────────
 
-const DEFAULT_RULE_TYPES: AlertType[] = ["price_change", "volume_spike", "volatility"];
+const SYSTEM_DEFAULTS: Record<AlertType, { threshold: number; cooldownMinutes: number }> = {
+  price_change: { threshold: 2.0,  cooldownMinutes: 60  },
+  volume_spike: { threshold: 2.5,  cooldownMinutes: 60  },
+  volatility:   { threshold: 40.0, cooldownMinutes: 120 },
+  rsi:          { threshold: 70.0, cooldownMinutes: 120 },
+  ema_cross:    { threshold: 0,    cooldownMinutes: 240 },
+  price_level:  { threshold: 0,    cooldownMinutes: 60  },
+};
+
+// Rule types that have meaningful always-on defaults (ema_cross fires on crossover
+// regardless of threshold; price_level requires a user-specific target so excluded).
+const AUTO_DEFAULT_TYPES: AlertType[] = ["price_change", "volume_spike", "volatility", "rsi", "ema_cross"];
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -160,9 +171,13 @@ function RuleRow({
             <span className="text-[10px] text-text-muted">{THRESHOLD_LABELS[rule.ruleType]}</span>
             <button
               onClick={() => setEditing(true)}
-              className="text-[10px] text-text-muted hover:text-gold-400 transition-colors ml-1"
+              className="text-text-muted hover:text-gold-400 transition-colors ml-1"
+              aria-label="Edit threshold"
             >
-              edit
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
             </button>
           </div>
         )}
@@ -177,6 +192,82 @@ function RuleRow({
   );
 }
 
+// ── Default Rule Row (system default, no DB entry yet) ────────────────────────
+
+function DefaultRuleRow({
+  ruleType,
+  onCustomize,
+  onDismiss,
+}: {
+  ruleType:    AlertType;
+  onCustomize: (ruleType: AlertType) => void;
+  onDismiss:   (ruleType: AlertType) => void;
+}) {
+  const tooltip  = RULE_TOOLTIPS[ruleType];
+  const defaults = SYSTEM_DEFAULTS[ruleType];
+
+  return (
+    <div
+      className="rounded-xl px-3 py-3 space-y-2"
+      style={{ background: "rgba(15,31,56,0.6)", border: "1px solid rgba(247,243,229,0.08)" }}
+    >
+      {/* Rule type + tooltip + default badge + actions */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <AlertTypeBadge type={ruleType} />
+          <InfoTooltip term={tooltip.term} explanation={tooltip.explanation} />
+          <span
+            className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: "rgba(247,243,229,0.07)", color: "#9DA5B4" }}
+          >
+            Default
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Customize (edit) */}
+          <button
+            onClick={() => onCustomize(ruleType)}
+            className="text-text-muted hover:text-gold-400 transition-colors"
+            aria-label="Customize rule"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+          {/* Dismiss */}
+          <button
+            onClick={() => onDismiss(ruleType)}
+            className="text-text-muted hover:text-red-400 transition-colors"
+            aria-label="Dismiss rule"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Threshold */}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-text-muted w-20 shrink-0">Threshold</span>
+        <span className="font-mono text-xs text-text-primary">
+          {ruleType === "ema_cross" ? "crossover signal" : `${defaults.threshold} ${THRESHOLD_LABELS[ruleType]}`}
+        </span>
+      </div>
+
+      {/* Cooldown */}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-text-muted w-20 shrink-0">Cooldown</span>
+        <span className="font-mono text-xs text-text-primary">{defaults.cooldownMinutes} min</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Add Custom Rule Form ──────────────────────────────────────────────────────
 
 const ALL_RULE_TYPES: AlertType[] = ["price_change", "volume_spike", "volatility", "rsi", "ema_cross", "price_level"];
@@ -185,14 +276,16 @@ function AddRuleForm({
   ticker,
   onAdd,
   onCancel,
+  prefill,
 }: {
   ticker: string;
   onAdd: (rule: Omit<AlertRule, "id">) => Promise<void>;
   onCancel: () => void;
+  prefill?: { ruleType: AlertType; threshold: number; cooldownMinutes: number };
 }) {
-  const [ruleType, setRuleType] = useState<AlertType>("rsi");
-  const [threshold, setThreshold] = useState("70");
-  const [cooldown, setCooldown] = useState("60");
+  const [ruleType, setRuleType] = useState<AlertType>(prefill?.ruleType ?? "rsi");
+  const [threshold, setThreshold] = useState(String(prefill?.threshold ?? 70));
+  const [cooldown, setCooldown] = useState(String(prefill?.cooldownMinutes ?? 60));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -274,87 +367,6 @@ function AddRuleForm({
   );
 }
 
-// ── Chatbot Section ───────────────────────────────────────────────────────────
-
-function ChatSection({ ticker }: { ticker: string }) {
-  const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
-  const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-
-  async function handleSend() {
-    if (!message.trim()) return;
-    setSending(true);
-    setFeedback(null);
-    try {
-      const res = await fetch("/api/v1/alerts/rules/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, message: message.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setFeedback({ ok: false, text: data.message ?? "Failed to process request." });
-      } else {
-        setFeedback({ ok: true, text: data.confirmation ?? "Rule configured successfully." });
-        setMessage("");
-      }
-    } catch {
-      setFeedback({ ok: false, text: "Network error. Please try again." });
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <div
-      className="rounded-xl px-3 py-3 space-y-2.5 mt-2"
-      style={{ background: "rgba(10,22,40,0.5)", border: "1px solid rgba(247,243,229,0.08)" }}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]"
-          style={{ background: "rgba(247,243,229,0.1)", color: "#d4ccae" }}
-        >
-          ✦
-        </span>
-        <p className="text-xs font-medium text-gold-400">Configure with AI</p>
-      </div>
-
-      <div className="flex gap-2">
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) handleSend(); }}
-          placeholder={`e.g. Alert me when ${ticker} RSI goes above 80...`}
-          className="flex-1 min-w-0 bg-navy-900 border border-navy-600 focus:border-gold-600/50 text-text-primary text-xs rounded-lg px-3 py-2 outline-none placeholder:text-text-muted"
-        />
-        <button
-          onClick={handleSend}
-          disabled={sending || !message.trim()}
-          className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40"
-          style={{ background: "rgba(247,243,229,0.1)", color: "#d4ccae" }}
-          aria-label="Send"
-        >
-          {sending ? (
-            <Spinner size="sm" color="default" />
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          )}
-        </button>
-      </div>
-
-      {feedback && (
-        <p className={`text-[11px] ${feedback.ok ? "text-emerald-400" : "text-red-400"}`}>
-          {feedback.text}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // ── Main Panel ─────────────────────────────────────────────────────────────────
 
 interface AlertRulesPanelProps {
@@ -366,6 +378,10 @@ export default function AlertRulesPanel({ ticker, onClose }: AlertRulesPanelProp
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [addFormPrefill, setAddFormPrefill] = useState<
+    { ruleType: AlertType; threshold: number; cooldownMinutes: number } | undefined
+  >(undefined);
+  const [dismissedDefaults, setDismissedDefaults] = useState<Set<AlertType>>(new Set());
 
   const load = useCallback(async (t: string) => {
     setLoading(true);
@@ -385,9 +401,21 @@ export default function AlertRulesPanel({ ticker, onClose }: AlertRulesPanelProp
     if (ticker) {
       setRules([]);
       setShowAddForm(false);
+      setAddFormPrefill(undefined);
+      setDismissedDefaults(new Set());
       load(ticker);
     }
   }, [ticker, load]);
+
+  function handleDismissDefault(ruleType: AlertType) {
+    setDismissedDefaults((prev) => new Set([...prev, ruleType]));
+  }
+
+  function handleCustomizeDefault(ruleType: AlertType) {
+    const defaults = SYSTEM_DEFAULTS[ruleType];
+    setAddFormPrefill({ ruleType, threshold: defaults.threshold, cooldownMinutes: defaults.cooldownMinutes });
+    setShowAddForm(true);
+  }
 
   async function handleUpdate(id: string, patch: Partial<Pick<AlertRule, "threshold" | "cooldownMinutes">>) {
     try {
@@ -478,54 +506,65 @@ export default function AlertRulesPanel({ ticker, onClose }: AlertRulesPanelProp
             <div className="flex items-center justify-center py-10">
               <Spinner size="sm" color="default" />
             </div>
-          ) : rules.length === 0 && !showAddForm ? (
-            <p className="text-xs text-text-muted text-center py-6">
-              No rules configured for {ticker}.<br />
-              <button
-                onClick={() => setShowAddForm(true)}
-                className="text-gold-400 hover:underline mt-1 inline-block"
-              >
-                Add one now
-              </button>
-            </p>
           ) : (
-            rules.map((rule) => (
-              <RuleRow
-                key={rule.id}
-                rule={rule}
-                onUpdate={handleUpdate}
-                onDelete={handleDelete}
-              />
-            ))
-          )}
+            <>
+              {/* User-defined rules */}
+              {rules.map((rule) => (
+                <RuleRow
+                  key={rule.id}
+                  rule={rule}
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                />
+              ))}
 
-          {/* Add custom rule */}
-          {!loading && !showAddForm && rules.length > 0 && (
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="w-full rounded-xl px-3 py-2.5 text-xs text-text-muted hover:text-gold-400 transition-colors text-left border border-dashed"
-              style={{ borderColor: "rgba(247,243,229,0.12)" }}
-            >
-              + Add custom rule
-            </button>
-          )}
+              {/* System defaults for rule types the user hasn't overridden or dismissed */}
+              {!showAddForm && (() => {
+                const customisedTypes = new Set(rules.map((r) => r.ruleType));
+                const defaultsToShow = AUTO_DEFAULT_TYPES.filter(
+                  (t) => !customisedTypes.has(t) && !dismissedDefaults.has(t)
+                );
+                if (defaultsToShow.length === 0) return null;
+                return (
+                  <>
+                    {rules.length > 0 && (
+                      <p className="text-[10px] text-text-muted uppercase tracking-wider pt-1">System defaults</p>
+                    )}
+                    {defaultsToShow.map((t) => (
+                      <DefaultRuleRow
+                        key={t}
+                        ruleType={t}
+                        onCustomize={handleCustomizeDefault}
+                        onDismiss={handleDismissDefault}
+                      />
+                    ))}
+                  </>
+                );
+              })()}
 
-          {showAddForm && ticker && (
-            <AddRuleForm
-              ticker={ticker}
-              onAdd={handleAdd}
-              onCancel={() => setShowAddForm(false)}
-            />
+              {/* Add custom rule button */}
+              {!showAddForm && (
+                <button
+                  onClick={() => { setAddFormPrefill(undefined); setShowAddForm(true); }}
+                  className="w-full rounded-xl px-3 py-2.5 text-xs text-text-muted hover:text-gold-400 transition-colors text-left border border-dashed"
+                  style={{ borderColor: "rgba(247,243,229,0.12)" }}
+                >
+                  + Add custom rule
+                </button>
+              )}
+
+              {showAddForm && ticker && (
+                <AddRuleForm
+                  ticker={ticker}
+                  onAdd={handleAdd}
+                  onCancel={() => { setShowAddForm(false); setAddFormPrefill(undefined); }}
+                  prefill={addFormPrefill}
+                />
+              )}
+            </>
           )}
         </div>
 
-        {/* Chatbot */}
-        <div
-          className="px-4 pb-4 border-t pt-3"
-          style={{ borderColor: "rgba(247,243,229,0.08)" }}
-        >
-          {ticker && <ChatSection ticker={ticker} />}
-        </div>
       </aside>
     </>
   );

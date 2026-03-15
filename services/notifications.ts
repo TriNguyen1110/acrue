@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { prisma } from "@/lib/db";
 import { tickerScheduler } from "@/services/tickerScheduler";
-import { runAlertDetection } from "@/services/alerts";
+import { runAlertDetectionForTicker } from "@/services/alerts";
 
 /**
  * Notification system — owns all background cron jobs.
@@ -30,15 +30,15 @@ export function startNotificationSystem(): void {
   tickerScheduler.start();
   console.log("[notifications] tickerScheduler started");
 
-  // Alert detection — every 5 minutes
-  cron.schedule("*/5 * * * *", async () => {
-    try {
-      await runAlertDetection();
-    } catch (e) {
-      console.error("[notifications] alert detection failed:", e);
-    }
+  // Alert detection — runs after every quote refresh (≤55×/min, driven by tickerScheduler).
+  // Quote data is already cached by the time detection reads it; candle/daily data
+  // is longer-TTL cached so no extra API calls are added per detection run.
+  tickerScheduler.addAfterFetchListener((ticker) => {
+    runAlertDetectionForTicker(ticker).catch((e) => {
+      console.error(`[notifications] alert detection failed for ${ticker}:`, e);
+    });
   });
-  console.log("[notifications] alert detection cron registered (*/5 * * * *)");
+  console.log("[notifications] alert detection wired to tickerScheduler (≤55×/min)");
 
   // Alert retention — daily at 03:00 UTC
   cron.schedule("0 3 * * *", async () => {

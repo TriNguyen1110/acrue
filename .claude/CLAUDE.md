@@ -60,11 +60,11 @@ lib/                      ← Infrastructure only (no business logic)
     screener.ts           ← Gainers/losers/most-active from S&P 100 universe
     index.ts              ← Barrel export
 services/                 ← Business logic (reads from lib/, writes to DB/Cache)
-  tickerScheduler.ts      ← Scores tickers by importance + staleness + volatility + volume spike
+  tickerScheduler.ts      ← Two-timer scheduler: 60s queue rebuild (score all tickers) + ~1091ms drain (pop + fetch, ≤55/min)
   auth.ts
   marketData.ts
   search.ts               ← Tag-based recommender + autocomplete (Finnhub candidates re-ranked by sector/industry/quoteType, max 10)
-  notifications.ts        ← includes node-cron scheduler
+  notifications.ts        ← node-cron for daily alert retention only; alert detection wired to tickerScheduler afterFetchListener
   news.ts
   signals.ts
   portfolio.ts
@@ -107,7 +107,7 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 - **API Routes** only call `services/`
 - **Services** contain business logic, read/write DB and Cache
 - **`lib/`** is infrastructure only — DB client, Redis client, rate limiter, Finnhub data access
-- **Notification System** runs background cron jobs triggering other services
+- **Notification System** owns background jobs: tickerScheduler drives quote refreshes + alert detection at ≤55/min; node-cron only used for daily alert retention
 
 ---
 
@@ -207,6 +207,9 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-13 | Replaced `yahoo-finance2` with Finnhub REST API | Yahoo Finance unofficial API is unreliable; Finnhub free tier provides real-time data + WebSocket |
 | 2026-03-13 | Token bucket rate limiter with scored ticker scheduler | Finnhub free tier capped at 60 req/min; priority queue maximizes data freshness within budget |
 | 2026-03-13 | Split `lib/` (infrastructure) from `services/` (business logic) | `lib/` = DB, Redis, rate limiter, Finnhub data access. `services/` = auth, signals, portfolio, etc. Cleaner separation of concerns |
+| 2026-03-14 | `price_change` alert uses 5-min candle interval instead of `previousClose` | Catches sudden intraday spikes, not slow drifts over the day. Default threshold lowered from 5% → 2% accordingly |
+| 2026-03-14 | Alert detection driven by `tickerScheduler.afterFetchListener` instead of a 5-min cron | Detection runs up to 55×/min, always on freshly cached quote data; no separate polling loop needed |
+| 2026-03-14 | `tickerScheduler` rebuilt as two-timer: 60s queue rebuild + ~1091ms drain | Queue refreshed once/min (new tickers added, scores recalculated); drain fires API calls at up to 55/min matching the rate-limit budget. Fewer tickers → fewer calls, never wastes budget |
 
 ---
 

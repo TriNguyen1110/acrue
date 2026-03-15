@@ -16,7 +16,7 @@ import type {
 // ── Default rule thresholds (used when no user-defined rule exists) ────────────
 
 const DEFAULTS: Record<AlertType, { threshold: number; cooldownMinutes: number }> = {
-  price_change: { threshold: 5.0,  cooldownMinutes: 60 },  // 5% move
+  price_change: { threshold: 2.0,  cooldownMinutes: 60 },  // 2% move in the last 5-min candle
   volume_spike: { threshold: 2.5,  cooldownMinutes: 60 },  // 2.5σ above mean
   volatility:   { threshold: 40.0, cooldownMinutes: 120 }, // 40% annualised vol
   rsi:          { threshold: 70.0, cooldownMinutes: 120 }, // RSI overbought/oversold
@@ -213,20 +213,26 @@ export async function detectAlertsForTicker(
 
   if (!quote) return [];
 
-  // ── Price change ──────────────────────────────────────────────────────────
+  // ── Price change (5-min interval) ────────────────────────────────────────
+  // Compares current price to the close of the last completed 5-min candle.
+  // This catches sudden intraday spikes rather than slow drifts from yesterday's close.
   const priceRule = rules.get("price_change") ?? DEFAULTS.price_change;
-  if (quote.previousClose && quote.previousClose > 0) {
-    const changePct = Math.abs((quote.price - quote.previousClose) / quote.previousClose * 100);
-    if (changePct >= priceRule.threshold) {
-      const direction = quote.price > quote.previousClose ? "+" : "";
-      const pct = ((quote.price - quote.previousClose) / quote.previousClose * 100).toFixed(2);
-      detected.push({
-        ticker,
-        type: "price_change",
-        message: `${ticker} moved ${direction}${pct}% from yesterday's close ($${quote.previousClose.toFixed(2)} → $${quote.price.toFixed(2)})`,
-        severity: classifyPriceSeverity(changePct, priceRule.threshold),
-        rules: { ruleType: "price_change", threshold: priceRule.threshold, cooldownMinutes: priceRule.cooldownMinutes },
-      });
+  if (candles.length >= 2) {
+    const prevCandle = candles[candles.length - 2]; // last fully completed 5-min bar
+    const prevPrice  = prevCandle.close;
+    if (prevPrice > 0) {
+      const changePct = Math.abs((quote.price - prevPrice) / prevPrice * 100);
+      if (changePct >= priceRule.threshold) {
+        const direction = quote.price > prevPrice ? "+" : "";
+        const pct = ((quote.price - prevPrice) / prevPrice * 100).toFixed(2);
+        detected.push({
+          ticker,
+          type: "price_change",
+          message: `${ticker} moved ${direction}${pct}% in the last 5 minutes ($${prevPrice.toFixed(2)} → $${quote.price.toFixed(2)})`,
+          severity: classifyPriceSeverity(changePct, priceRule.threshold),
+          rules: { ruleType: "price_change", threshold: priceRule.threshold, cooldownMinutes: priceRule.cooldownMinutes },
+        });
+      }
     }
   }
 
@@ -366,98 +372,94 @@ export async function detectAlertsForTicker(
 }
 
 /**
- * Main detection job — runs for all tickers across all users.
+ * Runs alert detection for a single ticker across all users watching it.
  *
- * For each ticker, we collect user-defined rules from all users watching it.
- * Alert deduplication uses per-user cooldown windows to avoid alert storms.
+ * Called by the tickerScheduler after each quote refresh so detection runs at
+ * the full 55 req/min rate rather than on a coarse 5-minute polling interval.
+ * Quote data is already cached from the scheduler's fetch; candles and daily
+ * data are longer-TTL cached so they add negligible extra API calls.
  */
-export async function runAlertDetection(): Promise<void> {
-  // Get all active watchlist tickers with their watchers
-  const watchlistRows = await prisma.watchlist.findMany({
-    select: { userId: true, ticker: true },
+export async function runAlertDetectionForTicker(ticker: string): Promise<void> {
+  const watchers = await prisma.watchlist.findMany({
+    where:  { ticker },
+    select: { userId: true },
+  });
+  if (watchers.length === 0) return;
+
+  const userIds = [...new Set(watchers.map((w) => w.userId))];
+
+  const rules = await prisma.alertRule.findMany({
+    where:  { ticker, userId: { in: userIds } },
+    select: { userId: true, ruleType: true, threshold: true, cooldownMinutes: true },
   });
 
-  // Build map: ticker → Set<userId>
-  const tickerUsers = new Map<string, Set<string>>();
-  for (const row of watchlistRows) {
-    if (!tickerUsers.has(row.ticker)) tickerUsers.set(row.ticker, new Set());
-    tickerUsers.get(row.ticker)!.add(row.userId);
-  }
-
-  if (tickerUsers.size === 0) return;
-
-  // Load all user rules in one query
-  const allRules = await prisma.alertRule.findMany({
-    select: { userId: true, ticker: true, ruleType: true, threshold: true, cooldownMinutes: true },
-  });
-
-  // Build map: userId+ticker → Map<AlertType, rule>
+  // Per-user rule map for cooldown fan-out
   const userRuleMap = new Map<string, Map<AlertType, { threshold: number; cooldownMinutes: number }>>();
-  for (const rule of allRules) {
-    const key = `${rule.userId}:${rule.ticker}`;
-    if (!userRuleMap.has(key)) userRuleMap.set(key, new Map());
-    userRuleMap.get(key)!.set(rule.ruleType as AlertType, {
-      threshold: rule.threshold,
+  for (const rule of rules) {
+    if (!userRuleMap.has(rule.userId)) userRuleMap.set(rule.userId, new Map());
+    userRuleMap.get(rule.userId)!.set(rule.ruleType as AlertType, {
+      threshold:       rule.threshold,
       cooldownMinutes: rule.cooldownMinutes,
     });
   }
 
-  // Process each ticker once (detection is per-ticker, not per-user)
-  for (const [ticker, userIds] of tickerUsers) {
-    let detected: DetectedAlert[];
-    try {
-      // Use the most sensitive threshold across all users watching this ticker
-      const combinedRules = new Map<AlertType, { threshold: number; cooldownMinutes: number }>();
-      for (const userId of userIds) {
-        const rules = userRuleMap.get(`${userId}:${ticker}`) ?? new Map();
-        for (const [type, rule] of rules) {
-          const existing = combinedRules.get(type);
-          if (!existing || rule.threshold < existing.threshold) {
-            combinedRules.set(type, rule);
-          }
-        }
-      }
-      detected = await detectAlertsForTicker(ticker, combinedRules);
-    } catch {
-      continue; // skip failing tickers, never abort the whole detection run
-    }
-
-    if (detected.length === 0) continue;
-
-    // Write an alert row per user that watches this ticker (with cooldown check)
-    const now = new Date();
-    for (const userId of userIds) {
-      for (const alert of detected) {
-        const userRules = userRuleMap.get(`${userId}:${alert.ticker}`);
-        const rule = userRules?.get(alert.type) ?? DEFAULTS[alert.type];
-        const cooldownMs = rule.cooldownMinutes * 60 * 1000;
-        const cutoff = new Date(now.getTime() - cooldownMs);
-
-        // Check cooldown — skip if same type alert was fired recently for this user+ticker
-        const recent = await prisma.alert.findFirst({
-          where: {
-            userId,
-            ticker: alert.ticker,
-            type: alert.type,
-            triggeredAt: { gte: cutoff },
-          },
-          select: { id: true },
-        });
-
-        if (recent) continue; // within cooldown window
-
-        await prisma.alert.create({
-          data: {
-            userId,
-            ticker: alert.ticker,
-            type: alert.type,
-            message: alert.message,
-            severity: alert.severity,
-            rules: alert.rules as object,
-          },
-        });
+  // Combined most-sensitive thresholds across all watchers
+  const combinedRules = new Map<AlertType, { threshold: number; cooldownMinutes: number }>();
+  for (const [, userRules] of userRuleMap) {
+    for (const [type, rule] of userRules) {
+      const existing = combinedRules.get(type);
+      if (!existing || rule.threshold < existing.threshold) {
+        combinedRules.set(type, rule);
       }
     }
+  }
+
+  let detected: DetectedAlert[];
+  try {
+    detected = await detectAlertsForTicker(ticker, combinedRules);
+  } catch {
+    return;
+  }
+  if (detected.length === 0) return;
+
+  const now = new Date();
+  for (const userId of userIds) {
+    for (const alert of detected) {
+      const rule = userRuleMap.get(userId)?.get(alert.type) ?? DEFAULTS[alert.type];
+      const cutoff = new Date(now.getTime() - rule.cooldownMinutes * 60_000);
+
+      const recent = await prisma.alert.findFirst({
+        where:  { userId, ticker: alert.ticker, type: alert.type, triggeredAt: { gte: cutoff } },
+        select: { id: true },
+      });
+      if (recent) continue;
+
+      await prisma.alert.create({
+        data: {
+          userId,
+          ticker:    alert.ticker,
+          type:      alert.type,
+          message:   alert.message,
+          severity:  alert.severity,
+          rules:     alert.rules as object,
+        },
+      });
+    }
+  }
+}
+
+/**
+ * Bulk detection fallback — iterates all watchlist tickers sequentially.
+ * Not used in the hot path (tickerScheduler drives per-ticker detection),
+ * but kept for manual runs and integration tests.
+ */
+export async function runAlertDetection(): Promise<void> {
+  const rows = await prisma.watchlist.findMany({
+    select:   { ticker: true },
+    distinct: ["ticker"],
+  });
+  for (const { ticker } of rows) {
+    await runAlertDetectionForTicker(ticker).catch(() => {});
   }
 }
 

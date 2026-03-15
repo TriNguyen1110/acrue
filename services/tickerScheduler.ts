@@ -11,107 +11,134 @@ import type { Quote } from "@/types";
  * volumeSpike (0.15) — unusual volume often precedes or accompanies a price event
  */
 const WEIGHTS = {
-  importance: 0.35,
-  staleness: 0.25,
-  volatility: 0.25,
+  importance:  0.35,
+  staleness:   0.25,
+  volatility:  0.25,
   volumeSpike: 0.15,
 };
 
 /**
- * Minimum age before a ticker is eligible to be re-fetched.
- *
- * Prevents the scheduler from re-queuing a ticker that was just fetched, which
- * would waste tokens and could loop the same popular ticker every second while
- * less-popular tickers never get refreshed.
+ * How often the priority queue is rebuilt from the DB.
+ * Each rebuild: refreshes watcher counts, adds new tickers, drops removed ones,
+ * and re-scores everything so the drain loop always works from fresh priorities.
  */
-const MIN_REFRESH_INTERVAL_MS = 45_000;
+const QUEUE_REBUILD_INTERVAL_MS = 60_000;
+
+/**
+ * Drain interval derived from the rate-limiter budget.
+ * Fires 55× per minute — if the queue has fewer than 55 items, the drain
+ * simply skips empty slots, so we never exceed the API budget.
+ */
+const DRAIN_INTERVAL_MS = Math.ceil(60_000 / 55); // ≈ 1091 ms
 
 interface TickerMeta {
   watcherCount: number;
-  lastFetchedAt: number; // tracked in-memory — no Redis read needed for staleness
-  changePct: number;     // from last fetched quote
-  volume: number;
-  avgVolume: number;
+  lastFetchedAt: number; // ms since epoch — updated after every successful fetch
+  changePct:    number;  // from last fetched quote
+  volume:       number;
+  avgVolume:    number;
 }
 
 /**
- * Continuous ticker refresh scheduler.
+ * Priority-queue-driven ticker refresh scheduler.
  *
- * Instead of pre-sorting all tickers at cron time and batch-enqueueing them
- * (which locks in stale scores), this scheduler runs a 1s tick that re-scores
- * every ticker with the current time and enqueues only the single highest-scored
- * eligible ticker per tick.
+ * Two timers run concurrently:
  *
- * This means:
- *   - Staleness is always computed against Date.now() — scores never go stale
- *   - The MEDIUM queue depth is always 0 or 1 items
- *   - A ticker that surges in volatility mid-cycle jumps to the front immediately
- *   - HIGH priority requests still preempt freely (rate limiter drains HIGH first)
+ *   rebuildTimer (60s) — queries the DB, refreshes watcher counts, scores every
+ *     ticker, and replaces the in-memory queue with a freshly sorted array.
+ *     New tickers added to any watchlist appear at the next rebuild (or immediately
+ *     via register()). Removed tickers are pruned.
  *
- * lastFetchedAt is maintained in-memory here (same process) rather than read
- * from Redis on every tick, keeping the scoring loop I/O-free.
+ *   drainTimer (~1091ms) — pops the highest-scored item from the queue and fires
+ *     one Finnhub quote fetch through the rate limiter. Skips when the queue is
+ *     empty. Because the rate limiter also caps at 55 req/min, the two controls
+ *     are complementary: the drain timer paces enqueues, the rate limiter
+ *     prevents bursts if the drain timer ever gets ahead.
+ *
+ * After each successful fetch, onQuoteFetched() updates in-memory metadata so
+ * the NEXT rebuild scores the ticker accurately (staleness, volatility, volume).
  */
 class TickerScheduler {
-  private tickers: Map<string, TickerMeta> = new Map();
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private watcherTimer: ReturnType<typeof setInterval> | null = null;
+  private tickers:              Map<string, TickerMeta> = new Map();
+  private queue:                Array<{ ticker: string; score: number }> = [];
+  private drainTimer:           ReturnType<typeof setInterval> | null = null;
+  private rebuildTimer:         ReturnType<typeof setInterval> | null = null;
+  private afterFetchListeners:  Array<(ticker: string, quote: Quote) => void> = [];
+
+  /** Register a callback that fires after every successful quote fetch. */
+  addAfterFetchListener(cb: (ticker: string, quote: Quote) => void): void {
+    this.afterFetchListeners.push(cb);
+  }
 
   start(): void {
-    this.refreshWatcherCounts();
-    this.watcherTimer = setInterval(() => this.refreshWatcherCounts(), 60_000);
-    this.tickTimer = setInterval(() => this.tick(), 1_000);
+    // Build the queue immediately, then on every subsequent minute
+    this.rebuildQueue();
+    this.rebuildTimer = setInterval(() => this.rebuildQueue(), QUEUE_REBUILD_INTERVAL_MS);
+
+    // Drain one item per slot — up to 55×/min
+    this.drainTimer = setInterval(() => this.drain(), DRAIN_INTERVAL_MS);
   }
 
   stop(): void {
-    if (this.tickTimer) clearInterval(this.tickTimer);
-    if (this.watcherTimer) clearInterval(this.watcherTimer);
-    this.tickTimer = null;
-    this.watcherTimer = null;
+    if (this.drainTimer)   clearInterval(this.drainTimer);
+    if (this.rebuildTimer) clearInterval(this.rebuildTimer);
+    this.drainTimer   = null;
+    this.rebuildTimer = null;
   }
 
   /**
-   * Called by getQuote after a successful fetch to keep in-memory state current.
-   * This is what makes staleness scoring accurate without Redis reads.
+   * Called externally after a successful quote fetch to keep metadata current
+   * so the next rebuild scores staleness/volatility/volume accurately.
    */
   onQuoteFetched(ticker: string, quote: Quote): void {
     const meta = this.tickers.get(ticker.toUpperCase());
     if (!meta) return;
     meta.lastFetchedAt = Date.now();
-    meta.changePct = quote.changePct;
-    meta.volume = quote.volume;
-    meta.avgVolume = quote.avgVolume;
+    meta.changePct     = quote.changePct;
+    meta.volume        = quote.volume;
+    meta.avgVolume     = quote.avgVolume;
+    for (const cb of this.afterFetchListeners) cb(ticker, quote);
   }
 
   /**
-   * Adds a ticker to the scheduler when a user adds it to their watchlist.
-   * Scores as maximally stale (lastFetchedAt = 0) so it's fetched on the next tick.
+   * Immediately adds a ticker when a user adds it to their watchlist.
+   * Inserted at the front of the current queue (max-stale score = 1.0)
+   * so it gets fetched on the very next drain slot.
    */
   register(ticker: string): void {
     const upper = ticker.toUpperCase();
     if (this.tickers.has(upper)) return;
     this.tickers.set(upper, {
-      watcherCount: 1,
+      watcherCount:  1,
       lastFetchedAt: 0,
-      changePct: 0,
-      volume: 0,
-      avgVolume: 0,
+      changePct:     0,
+      volume:        0,
+      avgVolume:     0,
     });
-    this.refreshWatcherCounts(); // recount so the new ticker gets the right weight
+    this.queue.unshift({ ticker: upper, score: 1.0 });
   }
+
+  /** Removes a ticker when it's no longer watched by anyone. */
+  deregister(ticker: string): void {
+    const upper = ticker.toUpperCase();
+    this.tickers.delete(upper);
+    this.queue = this.queue.filter((item) => item.ticker !== upper);
+  }
+
+  // ── Private ──────────────────────────────────────────────────────────────────
 
   /**
-   * Removes a ticker when it's no longer watched by anyone.
+   * Rebuilds the priority queue from scratch:
+   *   1. Refresh watcher counts from DB (adds new tickers, prunes removed ones)
+   *   2. Score every ticker using current metadata + Date.now() for staleness
+   *   3. Sort descending — highest-priority tickers drain first
    */
-  deregister(ticker: string): void {
-    this.tickers.delete(ticker.toUpperCase());
-  }
-
-  private async refreshWatcherCounts(): Promise<void> {
+  private async rebuildQueue(): Promise<void> {
     const rows = await prisma.$queryRaw<Array<{ ticker: string; count: bigint }>>`
-      SELECT ticker, COUNT(*)::int AS count FROM watchlist GROUP BY ticker
+      SELECT ticker, COUNT(*)::int AS count FROM "Watchlist" GROUP BY ticker
     `.catch(() => [] as Array<{ ticker: string; count: bigint }>);
 
-    // Add new tickers and update counts; preserve lastFetchedAt and quote metrics
+    // Sync the in-memory ticker map with the DB snapshot
     const seen = new Set<string>();
     for (const row of rows) {
       const upper = row.ticker.toUpperCase();
@@ -121,92 +148,73 @@ class TickerScheduler {
         existing.watcherCount = Number(row.count);
       } else {
         this.tickers.set(upper, {
-          watcherCount: Number(row.count),
+          watcherCount:  Number(row.count),
           lastFetchedAt: 0,
-          changePct: 0,
-          volume: 0,
-          avgVolume: 0,
+          changePct:     0,
+          volume:        0,
+          avgVolume:     0,
         });
       }
     }
-    // Remove tickers no longer on any watchlist
     for (const ticker of this.tickers.keys()) {
       if (!seen.has(ticker)) this.tickers.delete(ticker);
     }
+
+    if (this.tickers.size === 0) {
+      this.queue = [];
+      return;
+    }
+
+    const maxWatchers = Math.max(...[...this.tickers.values()].map((m) => m.watcherCount), 1);
+
+    this.queue = [...this.tickers.entries()]
+      .map(([ticker, meta]) => ({ ticker, score: this.computeScore(meta, maxWatchers) }))
+      .sort((a, b) => b.score - a.score);
   }
 
   private computeScore(meta: TickerMeta, maxWatchers: number): number {
     const importance = meta.watcherCount / maxWatchers;
 
-    // Staleness uses Date.now() — always accurate, no I/O needed
-    const ageMs = Date.now() - meta.lastFetchedAt;
+    const ageMs    = Date.now() - meta.lastFetchedAt;
     const staleness = Math.min(ageMs, 60_000) / 60_000;
 
-    // caps at 10% move = full volatility score
     const volatility = Math.min(Math.abs(meta.changePct) / 10, 1);
 
-    // caps at 3× average volume = full spike score
-    // gracefully scores 0 on cold start when volume is unknown
     const volumeSpike =
       meta.avgVolume > 0 && meta.volume > 0
         ? Math.min(meta.volume / meta.avgVolume / 3, 1)
         : 0;
 
     return (
-      WEIGHTS.importance * importance +
-      WEIGHTS.staleness * staleness +
-      WEIGHTS.volatility * volatility +
+      WEIGHTS.importance  * importance  +
+      WEIGHTS.staleness   * staleness   +
+      WEIGHTS.volatility  * volatility  +
       WEIGHTS.volumeSpike * volumeSpike
     );
   }
 
-  private pickNext(): { ticker: string; score: number } | null {
-    if (this.tickers.size === 0) return null;
-
-    const now = Date.now();
-    const maxWatchers = Math.max(
-      ...[...this.tickers.values()].map((m) => m.watcherCount),
-      1
-    );
-
-    let bestTicker: string | null = null;
-    let bestScore = -1;
-
-    for (const [ticker, meta] of this.tickers) {
-      if (now - meta.lastFetchedAt < MIN_REFRESH_INTERVAL_MS) continue;
-
-      const score = this.computeScore(meta, maxWatchers);
-      if (score > bestScore) {
-        bestScore = score;
-        bestTicker = ticker;
-      }
-    }
-
-    return bestTicker ? { ticker: bestTicker, score: bestScore } : null;
-  }
-
-  private tick(): void {
-    const { ticker, score } = this.pickNext() ?? {};
-    if (!ticker || score === undefined) return;
-
-    // Optimistically mark as fetching now so the next tick doesn't double-queue it
-    const meta = this.tickers.get(ticker);
-    if (meta) meta.lastFetchedAt = Date.now();
+  /**
+   * Pops the highest-scored item from the queue and fires a rate-limited fetch.
+   * Called ~55× per minute. No-ops when the queue is empty.
+   */
+  private drain(): void {
+    const item = this.queue.shift();
+    if (!item) return;
 
     rateLimiter
       .enqueue(
         async () => {
           const { getQuote } = await import("@/lib/finnhub");
-          const quote = await getQuote(ticker, score);
-          this.onQuoteFetched(ticker, quote);
+          const quote = await getQuote(item.ticker, item.score);
+          this.onQuoteFetched(item.ticker, quote);
           return quote;
         },
-        score
+        item.score
       )
       .catch(() => {
-        // Reset lastFetchedAt on failure so the ticker is retried next cycle
-        const m = this.tickers.get(ticker);
-        if (m) m.lastFetchedAt = 0;
+        // On failure reset staleness so the ticker is prioritised on the next rebuild
+        const meta = this.tickers.get(item.ticker);
+        if (meta) meta.lastFetchedAt = 0;
       });
   }
 }

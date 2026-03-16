@@ -2,6 +2,8 @@ import cron from "node-cron";
 import { prisma } from "@/lib/db";
 import { tickerScheduler } from "@/services/tickerScheduler";
 import { runAlertDetectionForTicker } from "@/services/alerts";
+import { newsScheduler } from "@/services/newsScheduler";
+import { ingestRssFeeds, purgeOldNews } from "@/services/news";
 
 /**
  * Notification system — owns all background cron jobs.
@@ -30,6 +32,25 @@ export function startNotificationSystem(): void {
   tickerScheduler.start();
   console.log("[notifications] tickerScheduler started");
 
+  // Start the company news ingestion scheduler (one ticker per ~16s drain slot)
+  newsScheduler.start();
+  console.log("[notifications] newsScheduler started");
+
+  // RSS ingestion — run immediately on startup, then Mon-Fri at market-aligned times
+  ingestRssFeeds()
+    .then((count) => console.log(`[notifications] RSS ingest (startup): ${count} new article(s)`))
+    .catch((e) => console.error("[notifications] RSS ingest (startup) failed:", e));
+
+  cron.schedule("0 7,9,12,16 * * 1-5", async () => {
+    try {
+      const count = await ingestRssFeeds();
+      console.log(`[notifications] RSS ingest: ${count} new article(s)`);
+    } catch (e) {
+      console.error("[notifications] RSS ingest failed:", e);
+    }
+  });
+  console.log("[notifications] RSS ingestion cron registered (0 7,9,12,16 * * 1-5)");
+
   // Alert detection — runs after every quote refresh (≤55×/min, driven by tickerScheduler).
   // Quote data is already cached by the time detection reads it; candle/daily data
   // is longer-TTL cached so no extra API calls are added per detection run.
@@ -49,10 +70,22 @@ export function startNotificationSystem(): void {
     }
   });
   console.log("[notifications] alert retention cron registered (0 3 * * *)");
+
+  // News retention — daily at 03:30 UTC — delete articles older than 7 days
+  cron.schedule("30 3 * * *", async () => {
+    try {
+      const count = await purgeOldNews(7);
+      console.log(`[notifications] news retention: deleted ${count} old article(s)`);
+    } catch (e) {
+      console.error("[notifications] news retention failed:", e);
+    }
+  });
+  console.log("[notifications] news retention cron registered (30 3 * * *)");
 }
 
 export function stopNotificationSystem(): void {
   tickerScheduler.stop();
+  newsScheduler.stop();
   started = false;
 }
 

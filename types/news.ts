@@ -3,7 +3,9 @@ export type ImpactLevel = "low" | "medium" | "high";
 
 export interface NewsArticle {
   id: string;
+  url: string;
   tickers: string[];
+  topics: string[];
   headline: string;
   summary: string | null;
   sentiment: Sentiment | null;
@@ -13,6 +15,7 @@ export interface NewsArticle {
   publishedAt: string | null;
   insight: string | null;
   createdAt: string;
+  isRead: boolean;
 }
 
 export interface PaginatedNews {

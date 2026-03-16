@@ -137,6 +137,156 @@ Without a rate limiter, concurrent user requests + background cron jobs will bur
 
 ---
 
+## 2026-03-15 — Trusted source allowlist for Finnhub company news
+
+**Decision:** Articles ingested from Finnhub `/company-news` are filtered through a `TRUSTED_SOURCES` Set before being persisted. Only articles whose `source` field (case-insensitive) matches a known reputable outlet are stored.
+
+**Trusted outlets include:** Reuters, Bloomberg, CNBC, MarketWatch, WSJ, Financial Times, AP, Barron's, Seeking Alpha, Yahoo Finance, Investing.com, Benzinga, The Motley Fool, Business Insider, Forbes, Fortune.
+
+**Why:**
+Finnhub aggregates company news from hundreds of sources, including low-quality blogs, press-release syndication services, and sites with no editorial standards. For a portfolio showcase, surfacing low-credibility articles would undermine the tool's usefulness and reflect poorly on the data pipeline design.
+
+**Tradeoffs:**
+- Articles from legitimate but unlisted sources are silently dropped — this is intentional. The allowlist can be extended as needed, but defaults conservative.
+- If Finnhub changes its source naming conventions, entries may not match. Mitigated by lowercasing both sides before comparison.
+
+---
+
+## 2026-03-15 — Word-boundary regex for ticker extraction to prevent single-letter false positives
+
+**Decision:** The `extractTickers` NLP function uses two guards against spurious single-letter ticker matches:
+1. **Minimum ticker length:** any ticker shorter than 2 characters is skipped entirely
+2. **Word-boundary regex:** tickers are matched with `(?<![A-Z])${t}(?![A-Z])` — a letter immediately adjacent to another uppercase letter (e.g. "APPLIED" containing "A") is not counted as a ticker match
+3. **Minimum company name length:** company names shorter than 5 characters are not used for name-based matching
+
+**Why:**
+Single-letter tickers exist on US markets (F = Ford, S = Sprint/T-Mobile, M = Macy's, etc.). Without guards, every occurrence of the letter "F" in any financial article would match the Ford ticker, producing meaningless ticker tags on nearly every article.
+
+**Tradeoffs:**
+- The word-boundary regex uses a lookbehind/lookahead that checks for adjacent uppercase letters, not true word boundaries — this means mixed-case text ("Ford") is handled by the name-matching path, not the ticker path. Correct behaviour.
+- Single-letter tickers are still validly extractable from all-caps contexts (e.g. "F reported earnings") — the regex allows this since "F" surrounded by spaces has no adjacent uppercase letters. However, given the noise risk, single-letter tickers are excluded by the length guard regardless. This means Ford, Sprint, etc. are only tagged via the name-matching path (name length ≥ 5 chars), which is more reliable.
+
+---
+
+## 2026-03-15 — Non-fatal ticker extraction in the news ingest pipeline
+
+**Decision:** If `getAssets()` (the DB lookup that loads the ticker→name map) throws an error during article ingestion, `extractTickers` catches the error and returns an empty array rather than propagating the exception.
+
+Additionally, `assetCache` is reset to `null` on failure so the next call retries the DB query rather than serving a stale null cache.
+
+**Why:**
+The Prisma PgAdapter driver (used in some execution contexts) has known compatibility gaps with certain query patterns. If asset lookup fails for any reason, it is better to store the article with no ticker tags than to silently discard the article entirely — the NLP pipeline can still extract sentiment, topics, and impact without ticker data.
+
+**Tradeoffs:**
+- Articles stored during an asset-lookup outage will have `tickers: []` and won't appear when filtered by ticker. They will still appear in macro topic feeds and unfiltered views.
+
+---
+
+## 2026-03-15 — `hasSome` instead of `isEmpty: false` for Prisma array filter
+
+**Decision:** The `getNewsForUser` query uses `{ topics: { hasSome: ALL_TOPICS } }` instead of `{ topics: { isEmpty: false } }` to gate macro-topic relevance.
+
+**Why:**
+`isEmpty: false` is not supported by the PrismaPg driver adapter — it silently fails or throws at runtime depending on the Prisma version. `hasSome: ALL_TOPICS` (where `ALL_TOPICS` is the explicit list of all topic keys) is semantically equivalent and universally supported across all Prisma drivers.
+
+**Tradeoffs:**
+- `ALL_TOPICS` must be kept in sync with `TOPIC_KEYWORDS` in `services/news.ts`. Adding a new topic keyword requires updating both constants. Acceptable; both live in the same file.
+
+---
+
+## 2026-03-15 — Immediate RSS ingest on server startup
+
+**Decision:** `services/notifications.ts` fires `ingestRssFeeds()` immediately when the module loads, in addition to the four scheduled cron windows (07:00, 09:30, 12:00, 16:30 ET).
+
+**Why:**
+The scheduled cron fires at fixed clock times. On first run, if the server starts at 14:00, the next scheduled fetch isn't until 16:30 — meaning the news feed shows no articles for 2.5 hours. A startup ingest populates the DB immediately, so the feed is non-empty from the first page load.
+
+**Tradeoffs:**
+- Startup ingest adds a small delay at boot time (RSS fetch + NLP pipeline). Non-blocking — uses `Promise` with `.then()/.catch()` so it doesn't hold up the server start.
+- If the server crashes and restarts frequently, each restart triggers an ingest — no harm done since articles are upserted by URL, not duplicated.
+
+---
+
+## 2026-03-15 — AP Business replaces Reuters as RSS source
+
+**Decision:** The Reuters RSS feed (`feeds.reuters.com`) was replaced with AP Business (`feeds.apnews.com/rss/apf-business`).
+
+**Why:**
+Reuters' public RSS endpoint (`feeds.reuters.com`) returns `ENOTFOUND` — the domain no longer resolves. Reuters has progressively moved content behind authenticated feeds and eventually removed the public RSS. AP Business is a wire service of equivalent quality and reliability, with a stable free RSS endpoint.
+
+**Tradeoffs:**
+- AP uses a slightly different XML structure — `rss-parser` normalises it transparently.
+
+---
+
+## 2026-03-15 — Gmail-style read state in the news feed (client-side)
+
+**Decision:** Articles the user has expanded (opened) are tracked in a `Set<string>` of article IDs held in React state (`readIds`). The feed re-sorts on every render: unread articles appear first, read articles sink to the bottom and are dimmed to 50% opacity with a darker background.
+
+**Why:**
+Financial news has a strong recency/attention signal. Once a user has read a headline, they don't need it competing visually with new unread items. The Gmail model (read items sink, unread items float) is immediately intuitive and requires no explicit "mark as read" button.
+
+**Why client-side state (not persisted to DB):**
+- Adding a `news_read` table and an API endpoint adds significant complexity for a UX convenience feature
+- News relevance decays within hours — whether a user read an article during this session is what matters, not across sessions
+- The `Set<string>` approach is zero-latency (no network call on expand)
+
+**Tradeoffs:**
+- Read state is lost on page refresh. Acceptable — fresh visit, fresh attention.
+- `readIds` grows monotonically within a session; no cleanup needed since the page is paginated and the set size is bounded by items loaded.
+
+---
+
+## 2026-03-15 — RSS feeds instead of NewsAPI for macro news
+
+**Decision:** Use `rss-parser` to consume public RSS feeds from Reuters, CNBC, MarketWatch, Yahoo Finance, and Seeking Alpha for macro/general financial news instead of NewsAPI.
+
+**Why not NewsAPI:**
+- Free tier is capped at **100 requests/day** — with ~8 macro topic queries per cycle and 4 ingest cycles/day, that's 32 req/day which fits, but any growth (more topics, more frequent polling) would immediately hit the ceiling
+- Cannot use multiple API keys without violating ToS (one account per person/organisation)
+- Paid tier ($449/mo) is not justified for a portfolio project
+- Content is still truncated — NewsAPI intentionally cuts article text at ~200 chars regardless of plan
+
+**Why RSS:**
+- **Free with no rate limits** — major outlets publish RSS as a public standard, no API key required
+- **Multiple reputable sources** — Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha are all tier-1 financial news sources
+- **Same data shape** — title + description/snippet + source + published date, which is all we need for sentiment analysis and ticker extraction
+- **`rss-parser`** (npm) handles all XML parsing — one-line call to get a clean JS array
+
+**Polling schedule (4× daily, market-aligned):**
+| Time (ET) | Reason |
+|-----------|--------|
+| 07:00 | Pre-market — overnight news before US open |
+| 09:30 | Market open |
+| 12:00 | Midday — Fed/macro releases often around here |
+| 16:30 | Post-close — earnings and after-hours news |
+
+**Ticker-specific news** still comes from Finnhub `/company-news` (already integrated, rate-limited) every 15 min.
+
+**Tradeoffs:**
+- RSS gives less structured metadata than a dedicated news API (no topic tags, no sentiment pre-computed) — we extract tickers and compute sentiment ourselves, which we were already doing
+- RSS feed structure varies slightly between sources — `rss-parser` normalises the common fields but edge cases (custom XML namespaces) may require per-source field mapping
+- No search/filter capability — we ingest everything from the feed and filter in-process
+
+---
+
+## 2026-03-15 — tickerScheduler rebuilt as two-timer model
+
+**Decision:** Replaced the 1s dynamic-pick tick with two separate timers:
+1. **60s rebuild** — queries DB, syncs watcher counts, re-scores all tickers, produces a freshly sorted priority queue
+2. **~1091ms drain (60 000 ÷ 55)** — pops one item per slot and fires a rate-limited Finnhub quote fetch
+
+**Why:**
+The previous 1s tick re-scored all tickers on every tick to find the single best candidate. While accurate, it mixed two concerns — queue management (what needs fetching) and execution (actually fetching). The two-timer model separates them cleanly: the rebuild timer owns the queue, the drain timer owns execution.
+
+The drain interval is derived directly from the rate budget: `60 000ms ÷ 55 req/min ≈ 1091ms`. If the queue has fewer than 55 tickers, drain slots no-op — the system naturally uses only what it needs and never wastes budget.
+
+**Tradeoffs:**
+- Scores are computed once per minute rather than continuously — a ticker that spikes in volatility mid-cycle won't move up until the next rebuild. Acceptable; the 60s window matches the quote cache TTL anyway.
+- Between rebuilds, the queue drains sequentially. With <55 tickers it empties well before the next rebuild, leaving drain slots idle. This is intentional — it means each ticker gets exactly one fresh fetch per minute, not spam.
+
+---
+
 ## 2026-03-13 — Scored ticker scheduler (`lib/tickerScheduler.ts`)
 
 **Decision:** Instead of refreshing all watchlist tickers in arbitrary order, run a continuous 1s tick that re-scores all tickers with the current time and enqueues only the single highest-scored eligible ticker per tick into the MEDIUM queue.

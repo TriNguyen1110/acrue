@@ -23,8 +23,10 @@
 
                ┌──────────────────────────────────────────┐
                ▼                    ▼                     ▼
-        Finnhub REST API     rateLimiter.ts            NewsAPI
-        (lib/finnhub/)       + tickerScheduler.ts
+        Finnhub REST API     rateLimiter.ts          RSS Feeds
+        (lib/finnhub/)       + tickerScheduler.ts   (rss-parser)
+                                                  Reuters, CNBC,
+                                                  MarketWatch, etc.
 ```
 
 **Key design decision**: All computation (signals, portfolio math, NLP sentiment) runs inside Node.js using `simple-statistics`, `ml-matrix`, and lightweight NLP libraries. No separate microservice.
@@ -168,10 +170,14 @@ POST /api/alerts/rules
 ```
 
 **Background job:**
-- Polls NewsAPI every 15 minutes
-- Runs sentiment analysis in Node via `sentiment` (AFINN-based) or `natural`
-- Entity/ticker extraction via keyword matching against asset DB
-- Stores enriched articles in `news_articles` table
+- Two ingest sources run on separate schedules:
+  - **Finnhub `/company-news`** — ticker-specific news, polled every 15 min per watchlist ticker, already rate-limited via `rateLimiter.ts`
+  - **RSS feeds** — macro/general financial news (Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha), polled 4× daily at market-aligned times (07:00, 09:30, 12:00, 16:30 ET)
+- `rss-parser` parses XML → clean JS objects (title, contentSnippet, link, pubDate)
+- Sentiment analysis via `sentiment` (AFINN) on headline + summary
+- Ticker extraction via keyword matching against asset DB (company names + tickers)
+- Macro articles with no direct ticker match tagged by topic (fed, inflation, earnings, etc.) and linked to related sectors
+- Stores enriched articles in `news_articles` table, deduplicated by URL
 
 ---
 
@@ -308,8 +314,9 @@ WS /ws/quotes      — live price ticks for watchlist assets
 | Job | Frequency | Action |
 |-----|-----------|--------|
 | Market data ingest | Every 1 min (market hours) | Score tickers via `tickerScheduler` (importance + staleness + volatility + volume spike), pull quotes via Finnhub through `rateLimiter`, update Redis cache |
-| Alert detection | Every 5 min | Compute anomaly scores in Node, write & push alerts |
-| News ingest | Every 15 min | Fetch NewsAPI, run Node NLP enrichment, store |
+| Alert detection | Per quote refresh (≤55/min) | Per-ticker anomaly detection triggered by tickerScheduler afterFetchListener |
+| News ingest — ticker | Every 15 min | Fetch Finnhub `/company-news` per watchlist ticker, run NLP enrichment, store |
+| News ingest — macro | 4× daily (07:00, 09:30, 12:00, 16:30 ET) | Fetch RSS feeds (Reuters, CNBC, MarketWatch, etc.), extract tickers/topics, run NLP, store |
 | Signal scoring | Every 30 min | Recompute scores for all watchlist assets |
 | Portfolio snapshot | Daily | Save portfolio metrics snapshot for history |
 
@@ -325,7 +332,8 @@ WS /ws/quotes      — live price ticks for watchlist assets
 | Technical indicators | `technicalindicators` |
 | Statistics / z-score | `simple-statistics` |
 | Matrix math (portfolio) | `ml-matrix` |
-| Sentiment analysis | `sentiment` (AFINN) or `natural` |
+| Sentiment analysis | `sentiment` (AFINN) |
+| RSS feed parsing | `rss-parser` — parses XML from Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha |
 | Scheduling | `node-cron` |
 | WebSocket | `ws` or Next.js with `socket.io` |
 | Caching | `ioredis` |

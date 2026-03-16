@@ -20,10 +20,12 @@
 - **Cache:** Redis (`ioredis`)
 - **Auth:** JWT (`jsonwebtoken` + `bcryptjs`)
 - **Market Data:** Finnhub REST API (`FINNHUB_API_KEY` env var) — replaces `yahoo-finance2`
+- **News (ticker):** Finnhub `/company-news` — already rate-limited, no extra key
+- **News (macro):** RSS feeds via `rss-parser` — Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha. Free, no key, no cap. 4× daily at market-aligned times.
 - **Indicators:** `technicalindicators`
 - **Stats/Math:** `simple-statistics`, `ml-matrix`
-- **NLP:** `sentiment`, `natural`
-- **Scheduler:** `node-cron` (lives inside Notification System)
+- **NLP:** `sentiment` (AFINN)
+- **Scheduler:** `node-cron` (daily alert retention only — news + alert detection driven by tickerScheduler)
 - **WebSocket:** `ws`
 
 ---
@@ -118,7 +120,7 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 1 | DB + Redis + migrations | Auth service + routes + pages | `[x]` |
 | 2 | Market Data service + caching | Watchlist service + routes + page | `[x]` |
 | 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[x]` |
-| 4 | News NLP + sentiment pipeline | News routes + page | `[ ]` |
+| 4 | News NLP + sentiment pipeline | News routes + page | `[x]` |
 | 5 | Signals scoring logic | Signals routes + page | `[ ]` |
 | 6 | Portfolio metrics + optimization | Portfolio routes + page | `[ ]` |
 | 7 | Monte Carlo simulation | Simulate routes + UI | `[ ]` |
@@ -210,6 +212,13 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-14 | `price_change` alert uses 5-min candle interval instead of `previousClose` | Catches sudden intraday spikes, not slow drifts over the day. Default threshold lowered from 5% → 2% accordingly |
 | 2026-03-14 | Alert detection driven by `tickerScheduler.afterFetchListener` instead of a 5-min cron | Detection runs up to 55×/min, always on freshly cached quote data; no separate polling loop needed |
 | 2026-03-14 | `tickerScheduler` rebuilt as two-timer: 60s queue rebuild + ~1091ms drain | Queue refreshed once/min (new tickers added, scores recalculated); drain fires API calls at up to 55/min matching the rate-limit budget. Fewer tickers → fewer calls, never wastes budget |
+| 2026-03-15 | AP Business replaces Reuters in RSS feed list | Reuters public RSS (`feeds.reuters.com`) returns ENOTFOUND — domain no longer resolves |
+| 2026-03-15 | `TRUSTED_SOURCES` allowlist for Finnhub company news | Finnhub aggregates from hundreds of sources including low-quality blogs; allowlist keeps only tier-1 outlets |
+| 2026-03-15 | Immediate RSS ingest on server startup | Scheduled cron fires at fixed times; without startup ingest the news feed is empty for hours on first boot |
+| 2026-03-15 | Non-fatal ticker extraction — `extractTickers` returns `[]` on DB failure | Asset lookup failure should not silently drop the whole article; article stored without ticker tags is still useful |
+| 2026-03-15 | `hasSome: ALL_TOPICS` replaces `isEmpty: false` in news query | PrismaPg driver adapter does not support `isEmpty: false`; `hasSome` is semantically equivalent and universally supported |
+| 2026-03-15 | Word-boundary regex + min-2-char guard for ticker extraction | Single-letter tickers (F, S, M, etc.) match in every financial sentence; guards prevent false-positive tags |
+| 2026-03-15 | Gmail-style read state in news feed (client-side `Set<string>`) | Persisting read state to DB adds complexity; session-scoped read tracking is sufficient since news relevance decays within hours |
 
 ---
 

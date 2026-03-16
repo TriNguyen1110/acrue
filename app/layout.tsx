@@ -34,7 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${dmSerifDisplay.variable} ${inter.variable} ${dmMono.variable} antialiased`}>
+      <body className={`${dmSerifDisplay.variable} ${inter.variable} ${dmMono.variable} antialiased`} style={{ zoom: 1.1 }}>
         <Providers>{children}</Providers>
       </body>
     </html>

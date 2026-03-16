@@ -97,9 +97,15 @@ function applyFilterSort(
   alerts: Alert[],
   filter: FilterKey,
   classFilter: string,
+  tickerFilter: string,
   sort: SortKey
 ): Alert[] {
   let out = [...alerts];
+
+  // Ticker filter
+  if (tickerFilter !== "__all__") {
+    out = out.filter((a) => a.ticker === tickerFilter);
+  }
 
   // Trigger-type filter
   if (filter === "high_priority") {
@@ -215,8 +221,9 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
         {alert.ticker}
       </span>
 
-      {/* Type */}
-      <div className="shrink-0">
+      {/* Cause */}
+      <div className="flex items-center gap-1 shrink-0">
+        <span className="text-[9px] text-text-muted uppercase tracking-wider">via</span>
         <AlertTypeBadge type={alert.type} size="sm" />
       </div>
 
@@ -290,7 +297,7 @@ function EmptyNoAlerts() {
         <span className="text-[11px] text-emerald-400 font-mono tracking-wide">Monitoring active</span>
       </div>
       <p className="text-text-secondary text-sm mb-1">No alerts yet.</p>
-      <p className="text-text-muted text-xs">Our system monitors your watchlist every 5 minutes.</p>
+      <p className="text-text-muted text-xs">We monitor your watchlist every minute.</p>
     </div>
   );
 }
@@ -307,9 +314,10 @@ export default function AlertsFeed() {
   const [totalPages, setTotalPages] = useState(1);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter]           = useState<FilterKey>("all");
   const [classFilter, setClassFilter] = useState<string>("__all__");
-  const [sort, setSort] = useState<SortKey>("newest");
+  const [tickerFilter, setTickerFilter] = useState<string>("__all__");
+  const [sort, setSort]               = useState<SortKey>("newest");
 
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
@@ -358,7 +366,7 @@ export default function AlertsFeed() {
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
-  }, [filter, classFilter]);
+  }, [filter, classFilter, tickerFilter]);
 
   async function handleMarkRead(id: string) {
     try {
@@ -392,7 +400,7 @@ export default function AlertsFeed() {
   }
 
   const classChips = getClassificationChips(alerts);
-  const displayed  = applyFilterSort(alerts, filter, classFilter, sort);
+  const displayed  = applyFilterSort(alerts, filter, classFilter, tickerFilter, sort);
 
   return (
     <>
@@ -501,7 +509,37 @@ export default function AlertsFeed() {
           ))}
         </div>
 
-        {/* Ticker classification chips — only shown when there's data to filter */}
+        {/* Watchlist ticker chips — always visible once loaded */}
+        {watchlistTickers.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker:</span>
+            <button
+              onClick={() => setTickerFilter("__all__")}
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
+                tickerFilter === "__all__"
+                  ? "bg-navy-700 border-navy-500 text-text-secondary"
+                  : "bg-transparent border-navy-700 text-text-muted hover:border-navy-600 hover:text-text-secondary"
+              }`}
+            >
+              All
+            </button>
+            {watchlistTickers.map((t) => (
+              <button
+                key={t}
+                onClick={() => setTickerFilter(t)}
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium transition-colors border ${
+                  tickerFilter === t
+                    ? "bg-gold-600/20 border-gold-600/40 text-gold-400"
+                    : "bg-transparent border-navy-700 text-text-muted hover:border-navy-600 hover:text-text-secondary"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Classification chips — sector / cap tier / ETF */}
         {classChips.length > 1 && (
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker:</span>

@@ -75,7 +75,7 @@ export async function addToWatchlist(
     // starts receiving anomaly alerts without any manual configuration.
     await prisma.alertRule.createMany({
       data: [
-        { userId, ticker: upper, ruleType: "price_change", threshold: 5,    cooldownMinutes: 60 },
+        { userId, ticker: upper, ruleType: "price_change", threshold: 2.0,  cooldownMinutes: 60 },
         { userId, ticker: upper, ruleType: "volume_spike", threshold: 2.5,  cooldownMinutes: 60 },
         { userId, ticker: upper, ruleType: "volatility",   threshold: 40,   cooldownMinutes: 120 },
       ],

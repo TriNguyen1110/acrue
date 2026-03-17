@@ -1,8 +1,6 @@
 import { prisma } from "@/lib/db";
 import { redis } from "@/lib/cache";
-import { getIntradayCandles, getVolumeArray, getDailyReturns, getClosePrices } from "@/services/marketData";
 import { getQuote } from "@/lib/finnhub";
-import { RSI, EMA } from "technicalindicators";
 import type {
   Alert,
   AlertRuleConfig,
@@ -16,12 +14,13 @@ import type {
 // ── Default rule thresholds (used when no user-defined rule exists) ────────────
 
 const DEFAULTS: Record<AlertType, { threshold: number; cooldownMinutes: number }> = {
-  price_change: { threshold: 2.0,  cooldownMinutes: 60 },  // 2% move in the last 5-min candle
-  volume_spike: { threshold: 2.5,  cooldownMinutes: 60 },  // 2.5σ above mean
-  volatility:   { threshold: 40.0, cooldownMinutes: 120 }, // 40% annualised vol
-  rsi:          { threshold: 70.0, cooldownMinutes: 120 }, // RSI overbought/oversold
-  ema_cross:    { threshold: 0,    cooldownMinutes: 240 }, // EMA crossover signal
-  price_level:  { threshold: 0,    cooldownMinutes: 60 },  // Absolute price target
+  price_change: { threshold: 2.0, cooldownMinutes: 60  }, // ≥2% day change vs prev close
+  volatility:   { threshold: 4.0, cooldownMinutes: 120 }, // ≥4% intraday high-low range
+  price_level:  { threshold: 0,   cooldownMinutes: 60  }, // absolute price target crossing
+  // below require candle history — not available on Finnhub free tier, kept for UI/rule storage only
+  volume_spike: { threshold: 2.5, cooldownMinutes: 60  },
+  rsi:          { threshold: 70,  cooldownMinutes: 120 },
+  ema_cross:    { threshold: 0,   cooldownMinutes: 240 },
 };
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -185,16 +184,17 @@ interface DetectedAlert {
 }
 
 /**
- * Runs anomaly detection for a single ticker against all three alert types.
+ * Runs anomaly detection for a single ticker using only quote-level data.
  *
- * Detection logic:
- *   price_change — |current price vs yesterday's close| > threshold %
- *   volume_spike — today's intraday volume z-score vs 30-day rolling mean/stddev
- *   volatility   — annualised rolling 20-day stddev of log returns > threshold %
+ * Finnhub's free tier does not expose the /stock/candle endpoint (403).
+ * All detection is therefore derived from the /quote response alone:
  *
- * Cooldown is enforced by checking whether an alert of the same type was
- * already fired within the configured cooldown window. This prevents alert
- * storms when a threshold condition persists for multiple detection cycles.
+ *   price_change — |quote.changePct| vs previous close ≥ threshold %
+ *   volatility   — intraday range (dayHigh - dayLow) / previousClose ≥ threshold %
+ *   price_level  — price crosses a user-defined absolute target
+ *
+ * volume_spike, rsi, ema_cross require historical candle data and are
+ * silently skipped here; their rules remain stored in the DB for future use.
  */
 export async function detectAlertsForTicker(
   ticker: string,
@@ -202,168 +202,61 @@ export async function detectAlertsForTicker(
 ): Promise<DetectedAlert[]> {
   const detected: DetectedAlert[] = [];
 
-  // Fetch all data needed for detection in parallel
-  const [quote, candles, volumes, returns, closes] = await Promise.all([
-    getQuote(ticker, 0.5).catch(() => null),
-    getIntradayCandles(ticker, "5m", 24).catch(() => []),
-    getVolumeArray(ticker, 30).catch(() => []),
-    getDailyReturns(ticker, 20).catch(() => []),
-    getClosePrices(ticker, 60).catch(() => []),  // 60 days needed for EMA(21) warmup
-  ]);
+  const quote = await getQuote(ticker, 0.5).catch(() => null);
+  if (!quote || quote.price === 0) return [];
 
-  if (!quote) return [];
+  const prevClose = quote.previousClose ?? 0;
+  const dayHigh   = quote.dayHigh       ?? 0;
+  const dayLow    = quote.dayLow        ?? 0;
+  const changePct = quote.changePct     ?? 0;
 
-  // ── Price change (5-min interval) ────────────────────────────────────────
-  // Compares current price to the close of the last completed 5-min candle.
-  // This catches sudden intraday spikes rather than slow drifts from yesterday's close.
-  const priceRule = rules.get("price_change") ?? DEFAULTS.price_change;
-  if (candles.length >= 2) {
-    const prevCandle = candles[candles.length - 2]; // last fully completed 5-min bar
-    const prevPrice  = prevCandle.close;
-    if (prevPrice > 0) {
-      const changePct = Math.abs((quote.price - prevPrice) / prevPrice * 100);
-      if (changePct >= priceRule.threshold) {
-        const direction = quote.price > prevPrice ? "+" : "";
-        const pct = ((quote.price - prevPrice) / prevPrice * 100).toFixed(2);
-        detected.push({
-          ticker,
-          type: "price_change",
-          message: `${ticker} moved ${direction}${pct}% in the last 5 minutes ($${prevPrice.toFixed(2)} → $${quote.price.toFixed(2)})`,
-          severity: classifyPriceSeverity(changePct, priceRule.threshold),
-          rules: { ruleType: "price_change", threshold: priceRule.threshold, cooldownMinutes: priceRule.cooldownMinutes },
-        });
-      }
-    }
+  // ── Price change ──────────────────────────────────────────────────────────
+  // Uses the day's % change vs previous close — available directly from /quote.
+  const priceRule  = rules.get("price_change") ?? DEFAULTS.price_change;
+  const absDayMove = Math.abs(changePct);
+  if (absDayMove >= priceRule.threshold && prevClose > 0) {
+    const direction = changePct >= 0 ? "+" : "";
+    detected.push({
+      ticker,
+      type:     "price_change",
+      message:  `${ticker} moved ${direction}${changePct.toFixed(2)}% today ($${prevClose.toFixed(2)} → $${quote.price.toFixed(2)})`,
+      severity: classifyPriceSeverity(absDayMove, priceRule.threshold),
+      rules:    { ruleType: "price_change", threshold: priceRule.threshold, cooldownMinutes: priceRule.cooldownMinutes },
+    });
   }
 
-  // ── Volume spike ──────────────────────────────────────────────────────────
-  const volumeRule = rules.get("volume_spike") ?? DEFAULTS.volume_spike;
-  if (volumes.length >= 10 && candles.length > 0) {
-    const todayVolume = candles.reduce((sum, c) => sum + c.volume, 0);
-    const mean = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-    const variance = volumes.reduce((a, b) => a + (b - mean) ** 2, 0) / volumes.length;
-    const stddev = Math.sqrt(variance);
-
-    if (stddev > 0) {
-      const zScore = (todayVolume - mean) / stddev;
-      if (zScore >= volumeRule.threshold) {
-        const multiplier = (todayVolume / mean).toFixed(1);
-        detected.push({
-          ticker,
-          type: "volume_spike",
-          message: `${ticker} volume is ${multiplier}x average (z-score: ${zScore.toFixed(2)})`,
-          severity: classifyZScoreSeverity(zScore, volumeRule.threshold),
-          rules: { ruleType: "volume_spike", threshold: volumeRule.threshold, cooldownMinutes: volumeRule.cooldownMinutes },
-        });
-      }
-    }
-  }
-
-  // ── Volatility ────────────────────────────────────────────────────────────
+  // ── Intraday range (volatility proxy) ─────────────────────────────────────
+  // Measures (dayHigh - dayLow) / previousClose as a % — a rough proxy for
+  // intraday volatility. Available entirely from the /quote response.
   const volRule = rules.get("volatility") ?? DEFAULTS.volatility;
-  if (returns.length >= 10) {
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / returns.length;
-    const annualisedVol = Math.sqrt(variance * 252) * 100; // % annualised
-
-    if (annualisedVol >= volRule.threshold) {
+  if (dayHigh > 0 && dayLow > 0 && prevClose > 0) {
+    const rangePct = ((dayHigh - dayLow) / prevClose) * 100;
+    if (rangePct >= volRule.threshold) {
       detected.push({
         ticker,
-        type: "volatility",
-        message: `${ticker} 20-day annualised volatility is ${annualisedVol.toFixed(1)}% (above ${volRule.threshold}% threshold)`,
-        severity: classifyVolatilitySeverity(annualisedVol, volRule.threshold),
-        rules: { ruleType: "volatility", threshold: volRule.threshold, cooldownMinutes: volRule.cooldownMinutes },
-      });
-    }
-  }
-
-  // ── RSI ───────────────────────────────────────────────────────────────────
-  // Fires when RSI(14) crosses into overbought (>70) or oversold (<30) territory.
-  // "Cross into" means the previous period was on the other side of the threshold —
-  // this avoids repeatedly re-alerting while RSI stays deeply overbought/oversold.
-  const rsiRule = rules.get("rsi") ?? DEFAULTS.rsi;
-  if (closes.length >= 15) {
-    const rsiValues = RSI.calculate({ values: closes, period: 14 });
-    if (rsiValues.length >= 2) {
-      const prev = rsiValues[rsiValues.length - 2];
-      const curr = rsiValues[rsiValues.length - 1];
-      const overbought = rsiRule.threshold;       // default 70
-      const oversold   = 100 - overbought;        // default 30
-
-      if (prev < overbought && curr >= overbought) {
-        detected.push({
-          ticker,
-          type: "rsi",
-          message: `${ticker} RSI(14) entered overbought territory at ${curr.toFixed(1)} (above ${overbought})`,
-          severity: curr >= overbought + 5 ? "high" : "medium",
-          rules: { ruleType: "rsi", threshold: rsiRule.threshold, cooldownMinutes: rsiRule.cooldownMinutes },
-        });
-      } else if (prev > oversold && curr <= oversold) {
-        detected.push({
-          ticker,
-          type: "rsi",
-          message: `${ticker} RSI(14) entered oversold territory at ${curr.toFixed(1)} (below ${oversold})`,
-          severity: curr <= oversold - 5 ? "high" : "medium",
-          rules: { ruleType: "rsi", threshold: rsiRule.threshold, cooldownMinutes: rsiRule.cooldownMinutes },
-        });
-      }
-    }
-  }
-
-  // ── EMA crossover ─────────────────────────────────────────────────────────
-  // Fires when EMA(9) crosses EMA(21) — a classic momentum signal.
-  // Golden cross (9 crosses above 21) = bullish; death cross = bearish.
-  const emaCrossRule = rules.get("ema_cross") ?? DEFAULTS.ema_cross;
-  if (closes.length >= 22) {
-    const ema9  = EMA.calculate({ values: closes, period: 9 });
-    const ema21 = EMA.calculate({ values: closes, period: 21 });
-
-    // Align the two series to the same length (EMA9 has more values than EMA21)
-    const offset = ema9.length - ema21.length;
-    const prev9  = ema9[ema9.length - 2];
-    const curr9  = ema9[ema9.length - 1];
-    const prev21 = ema21[ema21.length - 1 - offset < 0 ? 0 : ema21.length - 2];
-    const curr21 = ema21[ema21.length - 1];
-
-    const wasBelowOrEqual = prev9 <= prev21;
-    const wasAboveOrEqual = prev9 >= prev21;
-
-    if (wasBelowOrEqual && curr9 > curr21) {
-      detected.push({
-        ticker,
-        type: "ema_cross",
-        message: `${ticker} EMA(9) crossed above EMA(21) — bullish momentum signal ($${curr9.toFixed(2)} > $${curr21.toFixed(2)})`,
-        severity: "medium",
-        rules: { ruleType: "ema_cross", threshold: emaCrossRule.threshold, cooldownMinutes: emaCrossRule.cooldownMinutes },
-      });
-    } else if (wasAboveOrEqual && curr9 < curr21) {
-      detected.push({
-        ticker,
-        type: "ema_cross",
-        message: `${ticker} EMA(9) crossed below EMA(21) — bearish momentum signal ($${curr9.toFixed(2)} < $${curr21.toFixed(2)})`,
-        severity: "medium",
-        rules: { ruleType: "ema_cross", threshold: emaCrossRule.threshold, cooldownMinutes: emaCrossRule.cooldownMinutes },
+        type:     "volatility",
+        message:  `${ticker} intraday range is ${rangePct.toFixed(1)}% ($${dayLow.toFixed(2)}–$${dayHigh.toFixed(2)})`,
+        severity: classifyVolatilitySeverity(rangePct, volRule.threshold),
+        rules:    { ruleType: "volatility", threshold: volRule.threshold, cooldownMinutes: volRule.cooldownMinutes },
       });
     }
   }
 
   // ── Price level ───────────────────────────────────────────────────────────
   // Fires when price crosses a user-defined absolute price target.
-  // Uses previousClose as yesterday's price to detect the crossing direction.
   const priceLevelRule = rules.get("price_level");
-  if (priceLevelRule && priceLevelRule.threshold > 0 && quote.previousClose != null && quote.previousClose > 0) {
-    const target = priceLevelRule.threshold;
-    const crossedUp   = quote.previousClose < target && quote.price >= target;
-    const crossedDown = quote.previousClose > target && quote.price <= target;
-
+  if (priceLevelRule && priceLevelRule.threshold > 0 && prevClose > 0) {
+    const target      = priceLevelRule.threshold;
+    const crossedUp   = prevClose < target && quote.price >= target;
+    const crossedDown = prevClose > target && quote.price <= target;
     if (crossedUp || crossedDown) {
       const dir = crossedUp ? "crossed above" : "crossed below";
       detected.push({
         ticker,
-        type: "price_level",
-        message: `${ticker} ${dir} your price target of $${target.toFixed(2)} (now $${quote.price.toFixed(2)})`,
-        severity: "high",  // price targets are always user-intentional — treat as high
-        rules: { ruleType: "price_level", threshold: target, cooldownMinutes: priceLevelRule.cooldownMinutes },
+        type:     "price_level",
+        message:  `${ticker} ${dir} your price target of $${target.toFixed(2)} (now $${quote.price.toFixed(2)})`,
+        severity: "high",
+        rules:    { ruleType: "price_level", threshold: target, cooldownMinutes: priceLevelRule.cooldownMinutes },
       });
     }
   }
@@ -417,7 +310,8 @@ export async function runAlertDetectionForTicker(ticker: string): Promise<void> 
   let detected: DetectedAlert[];
   try {
     detected = await detectAlertsForTicker(ticker, combinedRules);
-  } catch {
+  } catch (e) {
+    console.error(`[alerts] detection failed for ${ticker}:`, e);
     return;
   }
   if (detected.length === 0) return;

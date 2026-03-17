@@ -512,7 +512,7 @@ export default function AlertsFeed() {
         {/* Watchlist ticker chips — always visible once loaded */}
         {watchlistTickers.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker:</span>
+            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker Names:</span>
             <button
               onClick={() => setTickerFilter("__all__")}
               className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
@@ -542,7 +542,7 @@ export default function AlertsFeed() {
         {/* Classification chips — sector / cap tier / ETF */}
         {classChips.length > 1 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker:</span>
+            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker Types:</span>
             {classChips.map((c) => (
               <button
                 key={c.key}

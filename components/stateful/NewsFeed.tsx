@@ -426,13 +426,17 @@ export default function NewsFeed() {
   // ── Toggle expand ─────────────────────────────────────────────────────────────
 
   function handleToggle(id: string) {
-    setExpandedId((prev) => (prev === id ? null : id));
-    // Mark as read on first open — persist to DB + update local state
-    setReadIds((prev) => {
-      if (prev.has(id)) return prev;
-      // Fire-and-forget — don't block the UI on the network call
-      fetch(`/api/v1/news/${id}`, { method: "POST" }).catch(() => {/* silent */});
-      return new Set(prev).add(id);
+    setExpandedId((prev) => {
+      if (prev === id) {
+        // Collapsing — mark as read now so it sinks after you're done reading
+        setReadIds((r) => {
+          if (r.has(id)) return r;
+          fetch(`/api/v1/news/${id}`, { method: "POST" }).catch(() => {});
+          return new Set(r).add(id);
+        });
+        return null;
+      }
+      return id;
     });
   }
 

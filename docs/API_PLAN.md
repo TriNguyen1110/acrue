@@ -174,7 +174,13 @@ POST /api/alerts/rules
   - **Finnhub `/company-news`** — ticker-specific news, polled every 15 min per watchlist ticker, already rate-limited via `rateLimiter.ts`
   - **RSS feeds** — macro/general financial news (Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha), polled 4× daily at market-aligned times (07:00, 09:30, 12:00, 16:30 ET)
 - `rss-parser` parses XML → clean JS objects (title, contentSnippet, link, pubDate)
-- Sentiment analysis via `sentiment` (AFINN) on headline + summary
+- Sentiment analysis via `sentiment` (AFINN lexicon) on headline + summary:
+  - AFINN is a ~3,500-word English lexicon where each word is pre-scored −5 to +5 by researchers (e.g. "profit" → +3, "bankrupt" → −5)
+  - Raw score = sum of all matched word scores in the article text
+  - Normalised by word count to remove length bias: `raw / (wordCount × 5)` → `[−1, +1]`
+  - Remapped to `[0, 1]`: `(clamped + 1) / 2`  (0 = very negative, 0.5 = neutral, 1 = very positive)
+  - Label thresholds: `< 0.4` → negative, `0.4–0.6` → neutral, `> 0.6` → positive
+  - Impact derived from distance from neutral: `> 0.75 or < 0.25` → high, `> 0.60 or < 0.40` → medium, else low
 - Ticker extraction via keyword matching against asset DB (company names + tickers)
 - Macro articles with no direct ticker match tagged by topic (fed, inflation, earnings, etc.) and linked to related sectors
 - Stores enriched articles in `news_articles` table, deduplicated by URL
@@ -208,11 +214,14 @@ POST /api/alerts/rules
 }
 ```
 
-**Compute logic (Node, internal `lib/signals.js`):**
-- Price momentum: rate-of-change + EMA crossover via `technicalindicators`
-- Volume anomaly: z-score on rolling volume via `simple-statistics`
-- Volatility: rolling standard deviation of log returns
-- News sentiment: aggregated from `news_articles` table (last 24h)
+**Compute logic (Node, `services/signals.ts`):**
+- **Price momentum (35%)**: day's % change mapped to [0,100] + 52-week range position (near 52w high = strong momentum)
+- **Analyst consensus (25%)**: Buy/Hold/Sell rating + % upside to mean analyst price target
+- **Valuation (20%)**: P/E ratio bracketed score + PEG ratio (P/E ÷ analyst-target-implied growth rate)
+- **News sentiment (20%)**: weighted average of `sentimentScore` from articles tagged with the ticker (last 7 days), impact-weighted (high=2×, medium=1×, low=0.5×), mapped [0,1] → [0,100]
+- **Statistical projection (30-day)**: annual vol estimated from 52-week range (`(52wH−52wL) / (2×1.96×price)`), monthly vol = annualVol/√12, 90% CI = expected ± 1.645σ, P(positive) via normal CDF
+- **Sharpe estimate**: (annualised expected return − 5% risk-free rate) / annualVol
+- Note: volume z-score, RSI, EMA cross require `/stock/candle` which returns 403 on Finnhub free tier — excluded
 
 ---
 

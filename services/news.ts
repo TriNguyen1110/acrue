@@ -105,16 +105,22 @@ async function getAssets(): Promise<AssetRef[]> {
 // ── NLP helpers ───────────────────────────────────────────────────────────────
 
 /**
- * Scores sentiment on combined headline + summary text.
+ * Scores sentiment on combined headline + summary text using the AFINN lexicon.
  *
- * Normalises the raw AFINN score by word count and maps it to a 0–1 scale:
+ * AFINN is a list of ~3,500 English words each pre-assigned an integer score
+ * from −5 (very negative) to +5 (very positive) by language researchers.
+ * Examples: "profit" → +3, "growth" → +2, "loss" → −3, "bankrupt" → −5.
+ * The `sentiment` package sums these scores across all matched words in the text.
+ *
+ * Normalises the raw AFINN sum by word count to remove length bias, then maps
+ * to a 0–1 scale so scores are comparable across articles of different lengths:
  *   raw / (wordCount * 5)   → clamped to [-1, 1]
  *   (clamped + 1) / 2       → mapped to  [0, 1]
  *
  * Thresholds:
- *   < 0.4  → negative
+ *   < 0.4   → negative
  *   0.4–0.6 → neutral
- *   > 0.6  → positive
+ *   > 0.6   → positive
  */
 function scoreSentiment(
   headline: string,

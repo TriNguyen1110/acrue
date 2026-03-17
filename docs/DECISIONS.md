@@ -373,6 +373,32 @@ A single `lib/` folder mixing infrastructure plumbing with business logic makes 
 
 ---
 
+## 2026-03-16 — Sentiment score is normalised to [0, 1] before storage (not raw AFINN)
+
+**Decision:** `NewsArticle.sentimentScore` stores a normalised float in `[0, 1]`, not the raw AFINN integer sum.
+
+**How it works (`services/news.ts → scoreSentiment()`):**
+1. `sentiment.analyze(headline + summary)` returns a raw AFINN score — the sum of individual word scores (each word is −5 to +5 in the lexicon).
+2. Normalise: `raw = afinnSum / (wordCount × 5)` — divides by the theoretical maximum, giving a per-word average in `[−1, +1]`.
+3. Clamp to `[−1, +1]` (guards against outlier articles with very few words).
+4. Remap to `[0, 1]`: `score = (clamped + 1) / 2` — 0 = very negative, 0.5 = neutral, 1 = very positive.
+
+**Why normalise before storing:**
+- Raw AFINN sums vary wildly with article length — a 500-word article will score much higher than a 50-word headline even if both express the same sentiment intensity. Normalising by word count removes this length bias.
+- A `[0, 1]` float is easier to threshold and display than an unbounded integer.
+
+**Impact classification** (`scoreImpact(score)`) is derived from distance from neutral (0.5):
+- `score > 0.75 or < 0.25` → `"high"` (strong directional signal)
+- `score > 0.60 or < 0.40` → `"medium"`
+- otherwise → `"low"`
+
+**Signal scoring integration (`services/signals.ts → scoreNewsSentiment()`):**
+- Fetches articles tagged with the ticker from the last 7 days.
+- Computes a **weighted average** of `sentimentScore` values, weighting by impact (`high=2, medium=1, low=0.5`) so high-conviction articles dominate.
+- Maps `[0, 1] → [0, 100]` directly (`avg × 100`) — neutral articles produce ~50, clearly positive ~70–85, clearly negative ~15–30.
+
+---
+
 ## 2026-03-13 — Prisma ORM instead of raw `pg`
 
 **Decision:** Use Prisma for DB access instead of raw SQL with `pg`.

@@ -121,7 +121,7 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 2 | Market Data service + caching | Watchlist service + routes + page | `[x]` |
 | 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[x]` |
 | 4 | News NLP + sentiment pipeline | News routes + page | `[x]` |
-| 5 | Signals scoring logic | Signals routes + page | `[ ]` |
+| 5 | Signals scoring logic | Signals routes + page | `[x]` |
 | 6 | Portfolio metrics + optimization | Portfolio routes + page | `[ ]` |
 | 7 | Monte Carlo simulation | Simulate routes + UI | `[ ]` |
 | 8 | WebSocket server | Wire quotes + alerts into pages | `[ ]` |
@@ -203,13 +203,13 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-13 | Using Prisma instead of raw SQL migrations | Auto-generated types, cleaner schema management |
 | 2026-03-13 | Using HeroUI + Tailwind v3 | Modern component library, requires Tailwind v3 (incompatible with v4) |
 | 2026-03-13 | Frontend split: pages / stateful components / ui components | Clear separation of concerns, easier to parallelize agent work |
-| 2026-03-11 | No `assets` table — fetch live from Yahoo Finance, cache in Redis | Avoids stale data, reduces DB complexity |
-| 2026-03-11 | `alert_rules` stored as JSONB inside `alerts` | No need for separate table at this scale |
-| 2026-03-11 | Scheduler lives inside Notification System | Keeps background jobs co-located with the service that owns them |
+| 2026-03-13 | `assets` table populated lazily on watchlist add | Populated from Finnhub profile on first add; avoids a separate bulk import job |
+| 2026-03-13 | `alertRules` is a separate table (not JSONB inside alerts) | Enables per-user per-ticker rule customisation and cooldown queries |
+| 2026-03-13 | Scheduler lives inside Notification System | Keeps background jobs co-located with the service that owns them |
 | 2026-03-13 | Replaced `yahoo-finance2` with Finnhub REST API | Yahoo Finance unofficial API is unreliable; Finnhub free tier provides real-time data + WebSocket |
 | 2026-03-13 | Token bucket rate limiter with scored ticker scheduler | Finnhub free tier capped at 60 req/min; priority queue maximizes data freshness within budget |
 | 2026-03-13 | Split `lib/` (infrastructure) from `services/` (business logic) | `lib/` = DB, Redis, rate limiter, Finnhub data access. `services/` = auth, signals, portfolio, etc. Cleaner separation of concerns |
-| 2026-03-14 | `price_change` alert uses 5-min candle interval instead of `previousClose` | Catches sudden intraday spikes, not slow drifts over the day. Default threshold lowered from 5% → 2% accordingly |
+| 2026-03-14 | `price_change` alert originally used 5-min candle — later switched to `quote.changePct` | Finnhub free tier returns 403 on `/stock/candle`; rewrote detection to use quote-only data |
 | 2026-03-14 | Alert detection driven by `tickerScheduler.afterFetchListener` instead of a 5-min cron | Detection runs up to 55×/min, always on freshly cached quote data; no separate polling loop needed |
 | 2026-03-14 | `tickerScheduler` rebuilt as two-timer: 60s queue rebuild + ~1091ms drain | Queue refreshed once/min (new tickers added, scores recalculated); drain fires API calls at up to 55/min matching the rate-limit budget. Fewer tickers → fewer calls, never wastes budget |
 | 2026-03-15 | AP Business replaces Reuters in RSS feed list | Reuters public RSS (`feeds.reuters.com`) returns ENOTFOUND — domain no longer resolves |
@@ -218,7 +218,12 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-15 | Non-fatal ticker extraction — `extractTickers` returns `[]` on DB failure | Asset lookup failure should not silently drop the whole article; article stored without ticker tags is still useful |
 | 2026-03-15 | `hasSome: ALL_TOPICS` replaces `isEmpty: false` in news query | PrismaPg driver adapter does not support `isEmpty: false`; `hasSome` is semantically equivalent and universally supported |
 | 2026-03-15 | Word-boundary regex + min-2-char guard for ticker extraction | Single-letter tickers (F, S, M, etc.) match in every financial sentence; guards prevent false-positive tags |
-| 2026-03-15 | Gmail-style read state in news feed (client-side `Set<string>`) | Persisting read state to DB adds complexity; session-scoped read tracking is sufficient since news relevance decays within hours |
+| 2026-03-15 | News read state persisted to DB (`UserNewsRead` table) | Client-side Set was lost on reload; `UserNewsRead` join table with compound PK enables persistent per-user read tracking with cascade delete |
+| 2026-03-15 | AFINN sentiment score normalised to [0,1] before storage | Raw AFINN sum varies with article length; dividing by `wordCount × 5` removes length bias. Stored as float, mapped to [0,100] when consumed by signals scorer |
+| 2026-03-15 | Alert detection rewrote to quote-only (removed candle dependency) | Finnhub free tier returns 403 on `/stock/candle`; all candle-based detection (price_change, volume_spike, RSI, EMA) silently returned `[]`. Rewrote using `quote.changePct` and intraday range `(dayHigh−dayLow)/prevClose` |
+| 2026-03-16 | Signal scoring uses 52w range as annual vol proxy (no candle history needed) | Finnhub free tier blocks `/stock/candle`; 52w high/low from `/stock/metric` gives σ ≈ range/(2×1.96×price) — sufficient for 30-day projection CIs |
+| 2026-03-16 | PEG ratio derived from analyst price target upside as implied growth rate | No Finnhub free-tier endpoint for EPS growth estimates; analyst target upside treated as 1-year forward growth approximation |
+| 2026-03-16 | Composite signal: Momentum 35%, Analyst 25%, Valuation 20%, News Sentiment 20% | Momentum captures short-term edge; analyst adds sell-side signal; valuation avoids chasing expensive growth; news sentiment from already-stored articles at no extra API cost |
 
 ---
 

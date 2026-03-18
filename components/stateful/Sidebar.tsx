@@ -12,7 +12,7 @@ const NAV = [
   { href: "/news",      label: "News",       icon: "◎" },
   { href: "/signals",   label: "Signals",    icon: "◆" },
   { href: "/portfolio", label: "Portfolio",  icon: "◇" },
-  { href: "/simulate",  label: "Simulate",   icon: "◈" },
+  { href: "/simulate",  label: "Simulate",   icon: "⬡" },
 ];
 
 function useUnreadAlerts() {

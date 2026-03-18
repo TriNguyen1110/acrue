@@ -33,8 +33,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${dmSerifDisplay.variable} ${inter.variable} ${dmMono.variable} antialiased`} style={{ zoom: 1.1 }}>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body
+        className={`${dmSerifDisplay.variable} ${inter.variable} ${dmMono.variable} antialiased`}
+        style={{ zoom: 1.1 }}
+        suppressHydrationWarning
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

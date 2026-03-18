@@ -14,9 +14,9 @@
 
 ## Tech Stack
 
-- **Framework:** Next.js (App Router, JS not TS)
+- **Framework:** Next.js (App Router, TypeScript)
 - **Runtime:** Node.js
-- **DB:** PostgreSQL (`pg`)
+- **DB:** PostgreSQL (Prisma ORM)
 - **Cache:** Redis (`ioredis`)
 - **Auth:** JWT (`jsonwebtoken` + `bcryptjs`)
 - **Market Data:** Finnhub REST API (`FINNHUB_API_KEY` env var) — replaces `yahoo-finance2`
@@ -38,21 +38,32 @@ app/
     auth/
     watchlist/
     alerts/
+      filters/            ← GET /api/v1/alerts/filters (full history filter options)
+      read-all/
+      unread/
+      rules/
+      [id]/
     news/
     signals/
     portfolio/
+    simulate/             ← Paper trading portfolios (CRUD + holdings)
+      [id]/
+        holdings/
+          [ticker]/
   (pages)/                ← Frontend pages (one folder per use case)
-    dashboard/
+    dashboard/            ← Overview: unread alerts, top signals, movers, latest news
     watchlist/
     alerts/
     news/
     signals/
     portfolio/
+    simulate/             ← Paper trading portfolio builder + comparison
   providers.tsx           ← HeroUIProvider wrapper
 lib/                      ← Infrastructure only (no business logic)
   db.ts                   ← Prisma client
   cache.ts                ← Redis client
-  rateLimiter.ts          ← Token bucket rate limiter (55 req/min, 3-tier priority queue)
+  rateLimiter.ts          ← Token bucket rate limiter (55 req/min, float-score priority queue)
+  historicalPrices.ts     ← Yahoo Finance daily closes + log returns + covariance matrix
   finnhub/                ← Finnhub API data access layer
     client.ts             ← Base fetch routed through rateLimiter
     quote.ts              ← Live quotes (60s TTL)
@@ -69,7 +80,8 @@ services/                 ← Business logic (reads from lib/, writes to DB/Cach
   notifications.ts        ← node-cron for daily alert retention only; alert detection wired to tickerScheduler afterFetchListener
   news.ts
   signals.ts
-  portfolio.ts
+  portfolio.ts            ← Holdings CRUD + MPT optimization (projected gradient ascent on U=μ−Aσ²)
+  simulate.ts             ← Paper trading portfolios: create/manage fake portfolios, track P&L vs real market prices
   ws.ts
 components/               ← Reusable UI components
   ui/                     ← Stateless, pure presentational components
@@ -79,11 +91,23 @@ components/               ← Reusable UI components
     PriceChange.tsx
     ...
   stateful/               ← Stateful components (fetching, local state)
+    DashboardOverview.tsx ← Dashboard: stat pills + 4-quadrant overview grid
     WatchlistTable.tsx
-    AlertsFeed.tsx
+    AlertsFeed.tsx        ← LeetCode-style filter panel (type, severity, ticker, sector, topic/industry, cap tier, ETF)
+    AlertRulesPanel.tsx
     SignalScoreList.tsx
     PortfolioChart.tsx
+    SimulateDashboard.tsx ← Paper portfolio builder: create portfolios, add holdings with live P&L, compare
     ...
+types/                    ← Shared TypeScript interfaces
+  index.ts                ← Barrel
+  alerts.ts
+  market.ts
+  news.ts
+  portfolio.ts
+  signals.ts
+  simulate.ts             ← SimHolding, SimPortfolio, SimPortfolioMetrics
+  watchlist.ts
 docs/                     ← Planning docs
 ```
 
@@ -122,15 +146,14 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 3 | Alerts anomaly detection logic | Alerts routes + page + cron wiring | `[x]` |
 | 4 | News NLP + sentiment pipeline | News routes + page | `[x]` |
 | 5 | Signals scoring logic | Signals routes + page | `[x]` |
-| 6 | Portfolio metrics + optimization | Portfolio routes + page | `[ ]` |
-| 7 | Monte Carlo simulation | Simulate routes + UI | `[ ]` |
+| 6 | Portfolio metrics + MPT optimization | Portfolio routes + page | `[x]` |
+| 7 | Paper trading portfolios (simulate service + routes + UI) | Alerts topic filter (industry) + filter options endpoint + Dashboard overview page | `[x]` |
 | 8 | WebSocket server | Wire quotes + alerts into pages | `[ ]` |
 | 9 | Deploy + env config | Smoke test + fix issues | `[ ]` |
 | 10 | Bug fixes + polish | README + architecture diagram | `[ ]` |
-| 11 | Dashboard page + summaries | Navigation + layout polish | `[ ]` |
-| 12 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
-| 13 | End-to-end walkthrough + fix remaining bugs | Final UI polish + mobile responsiveness | `[ ]` |
-| 14 | Demo video / screenshots | Final README + live deploy check | `[ ]` |
+| 11 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
+| 12 | End-to-end walkthrough + fix remaining bugs | Final UI polish + mobile responsiveness | `[ ]` |
+| 13 | Demo video / screenshots | Final README + live deploy check | `[ ]` |
 
 ---
 
@@ -224,6 +247,11 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-16 | Signal scoring uses 52w range as annual vol proxy (no candle history needed) | Finnhub free tier blocks `/stock/candle`; 52w high/low from `/stock/metric` gives σ ≈ range/(2×1.96×price) — sufficient for 30-day projection CIs |
 | 2026-03-16 | PEG ratio derived from analyst price target upside as implied growth rate | No Finnhub free-tier endpoint for EPS growth estimates; analyst target upside treated as 1-year forward growth approximation |
 | 2026-03-16 | Composite signal: Momentum 35%, Analyst 25%, Valuation 20%, News Sentiment 20% | Momentum captures short-term edge; analyst adds sell-side signal; valuation avoids chasing expensive growth; news sentiment from already-stored articles at no extra API cost |
+| 2026-03-17 | Portfolio MPT optimization uses projected gradient ascent on `U = μ − A×σ²` | Standard closed-form MVO breaks with singular covariance matrices (few tickers, short history); gradient ascent with simplex projection (Duchi 2008) is stable for any portfolio size |
+| 2026-03-17 | Paper trading portfolios replace Monte Carlo simulation for Day 7 | Monte Carlo requires candle history (403 on Finnhub free); paper trading uses live quotes already in cache — startPrice locked at add time, live P&L from quote.price |
+| 2026-03-17 | Alerts topic filter uses ticker's industry categories (not macro news topics) | Industry tags (Software, Biotechnology, etc.) are the natural categories for a stock; macro news topics require a join through news articles which adds latency and is less precise |
+| 2026-03-17 | Alert filter options query combines alert tickers + watchlist tickers | Alert tickers alone miss industries of tickers that haven't fired alerts yet; including watchlist gives users full industry coverage from the moment they add tickers |
+| 2026-03-17 | Dashboard fetches 4 endpoints in parallel with `Promise.allSettled` | Partial failures (e.g. signals slow) must not blank the whole dashboard; allSettled lets each quadrant render independently with its own data |
 
 ---
 

@@ -399,6 +399,85 @@ A single `lib/` folder mixing infrastructure plumbing with business logic makes 
 
 ---
 
+## 2026-03-17 — Dashboard fetches four data sources in parallel with `Promise.allSettled`
+
+**Decision:** `DashboardOverview` fires four concurrent fetch calls on mount using `Promise.allSettled`, one per quadrant (alerts, signals, watchlist/movers, news). Each result is applied independently — a failure in one does not prevent the others from rendering.
+
+**Why `allSettled` not `Promise.all`:**
+`Promise.all` rejects as soon as any one request fails. On the Dashboard — which aggregates data from every service — a signals timeout or a temporary news DB issue would blank the entire page. `allSettled` is the correct primitive here: each quadrant is independently useful even without the others.
+
+**Tradeoffs:**
+- Four concurrent requests on page load vs. one aggregated endpoint — a future `/api/v1/dashboard` route could batch all four queries server-side, reducing client round-trips and allowing server-side caching. Not done now to avoid over-engineering; the four API routes already exist and the page loads fast enough with parallelism.
+
+---
+
+## 2026-03-17 — Paper trading portfolios instead of Monte Carlo simulation
+
+**Decision:** The "Simulate" use case was redesigned from Monte Carlo scenario simulation to paper trading portfolios — users can create multiple named portfolios, add holdings with a locked-in start price, and track live P&L against real market prices over time.
+
+**Why the change:**
+Monte Carlo simulation requires OHLCV candle history to build a covariance matrix and sample correlated return paths. Finnhub free tier returns 403 on `/stock/candle`. Without historical returns the simulation would be statistically unsound (a fake covariance matrix would give fake confidence intervals). Paper trading, by contrast, only needs a single live quote per ticker — already fetched and cached by `tickerScheduler` every minute.
+
+**How it works:**
+- `startPrice` is written to `SimulatedHolding` at the moment the user adds a holding (locked-in snapshot of `quote.price`)
+- `currentPrice` fetched live from `/api/v1/assets/:ticker/quote` via `enrichHoldings()` on every GET
+- P&L = `(currentPrice − startPrice) / startPrice × 100`
+- Multiple portfolios per user, each independently tracked — enables strategy comparison
+
+**Tradeoffs:**
+- Start price is a point-in-time snapshot; it reflects the price at add time not a hypothetical purchase. Users who add a holding after a 10% run-up see that embedded in their P&L. This is intentional — it reflects actual "I decided to track this now" semantics.
+- `enrichHoldings()` fires one quote fetch per holding in `Promise.allSettled` — no batching. Acceptable at the scale of a paper portfolio (typically <20 holdings).
+
+---
+
+## 2026-03-17 — Alerts topic filter uses ticker's own industry categories
+
+**Decision:** The "Topic" filter in the Alerts feed is populated with the industry classifications of the user's watchlisted tickers (e.g., "Software", "Biotechnology", "Banks"), not macro news topics (Fed, Inflation, etc.).
+
+**Why industry, not macro topics:**
+An earlier implementation bridged alerts → news articles → `NewsArticle.topics` to derive which macro topics were relevant for each alert ticker. This added latency (an extra DB join through news articles), required news articles to exist before any topics appeared, and produced coarse-grained results (many tickers have "earnings" in their news regardless of industry). Industry is a stable, direct property of every ticker populated at watchlist-add time via the Finnhub profile — no joins needed, always available.
+
+**Filter mechanics:**
+- `options.industries` returned by `GET /api/v1/alerts/filters` lists all distinct industries from the combined alert-ticker + watchlist-ticker set
+- Selecting an industry chip filters `alerts` to those where `alert.industry === selectedIndustry`
+- `alert.industry` is joined from the `Asset` table in `getUserAlerts()` enrichment
+
+**Tradeoffs:**
+- Industry is more granular than sector (30+ industries vs 11 sectors) — this is a feature, not a bug, since users watching multiple tech sub-sectors (Software vs Semiconductors) can now distinguish them
+
+---
+
+## 2026-03-17 — Alert filter options query combines alert tickers and watchlist tickers
+
+**Decision:** `getAlertFilterOptions()` now fetches distinct tickers from both the `Alert` table and the `Watchlist` table before querying `Asset` for sector/industry/type data. The `tickers` field in the response (used for Ticker filter chips) is still alert-tickers only; the extended set is used only to populate the Topic (industry) and Sector chips.
+
+**Why:**
+If a user has 10 tickers on their watchlist but alerts have only fired for 3 of them, the industry filter would show only 3 tickers' worth of industries — missing the categories of the other 7 tickers entirely. Since the filter's purpose is to let users narrow their view by the kinds of companies they're tracking (not just the ones that have happened to alert), the full watchlist is the right scope.
+
+**Tradeoffs:**
+- Two DB queries (alerts + watchlist) instead of one — negligible overhead; both are indexed by `userId` and return small row counts.
+- The `tickers` chip list (Ticker filter group) intentionally stays alert-only: there's no point showing a ticker chip for a stock that has no alerts to filter.
+
+---
+
+## 2026-03-17 — Portfolio MPT optimization uses projected gradient ascent
+
+**Decision:** `optimizePortfolio()` maximises the mean-variance utility function `U = μ − A×σ²` (where A = risk aversion coefficient derived from the user's risk setting) using projected gradient ascent with simplex projection.
+
+**Simplex projection (Duchi et al., 2008):** After each gradient step, weights are projected back onto the probability simplex (all weights ≥ 0, sum = 1) via the efficient O(n log n) algorithm.
+
+**Why not closed-form MVO:**
+Classical Markowitz optimization solves a quadratic program analytically, but requires the covariance matrix to be invertible. With fewer than ~30 tickers and short history, the covariance matrix is often rank-deficient (singular), causing numerical instability. Gradient ascent is stable for any portfolio size, requires no matrix inversion, and converges to the same global maximum (the function is concave) within 500 iterations.
+
+**Covariance matrix source:**
+Daily log returns from Yahoo Finance (unofficial raw API, 24h Redis cache). Falls back to diagonal covariance (each ticker's own variance only, ρ=0.3 cross-correlation assumed) if fewer than 20 observations are available.
+
+**Tradeoffs:**
+- 500 iterations × O(n) per step = O(500n) — negligible for portfolios up to a few hundred tickers
+- Yahoo Finance raw API for historical prices could break (same fragility risk as `yahoo-finance2`); acceptable since it's only used for optimization, not real-time data
+
+---
+
 ## 2026-03-13 — Prisma ORM instead of raw `pg`
 
 **Decision:** Use Prisma for DB access instead of raw SQL with `pg`.

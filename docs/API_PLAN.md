@@ -107,7 +107,9 @@ POST /api/watchlist
 |--------|----------|-------------|
 | `GET` | `/api/alerts` | Get alert history (paginated) |
 | `GET` | `/api/alerts/unread` | Get unread alerts count + list |
+| `GET` | `/api/alerts/filters` | Get all distinct filter values across full alert + watchlist history |
 | `PATCH` | `/api/alerts/:id/read` | Mark alert as read |
+| `PATCH` | `/api/alerts/read-all` | Mark all alerts as read |
 | `DELETE` | `/api/alerts/:id` | Dismiss alert |
 | `GET` | `/api/alerts/rules` | Get user's alert sensitivity rules |
 | `POST` | `/api/alerts/rules` | Create custom alert rule |
@@ -138,8 +140,20 @@ POST /api/alerts/rules
 }
 ```
 
+**`GET /api/alerts/filters` response:**
+```json
+{
+  "tickers": ["AAPL", "NVDA"],
+  "sectors": ["Technology", "Healthcare"],
+  "industries": ["Software", "Semiconductors", "Biotechnology"],
+  "capTiers": [">$200B", ">$10B"],
+  "hasEtf": false
+}
+```
+Note: `industries` powers the "Topic" filter chips in the UI — filtered by `alert.industry` on the client. `tickers` contains only alert-firing tickers; `industries` comes from the combined alert + watchlist ticker set for full coverage.
+
 **Background job** (Node cron):
-- `runAlertDetection()` — runs every 5 min, computes anomaly scores in Node (z-score via `simple-statistics`), writes alerts to DB, pushes via WebSocket
+- `runAlertDetection()` — driven by `tickerScheduler.afterFetchListener` (runs up to 55×/min on freshly cached quotes); nightly retention cron purges read alerts >30d, unread >90d, caps at 500 rows/user
 
 ---
 
@@ -229,25 +243,23 @@ POST /api/alerts/rules
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/portfolio` | Get holdings + current metrics |
+| `GET` | `/api/portfolio` | Get holdings + current metrics (60s Redis cache) |
 | `POST` | `/api/portfolio/holdings` | Add holding |
 | `PATCH` | `/api/portfolio/holdings/:ticker` | Update shares/avg cost |
 | `DELETE` | `/api/portfolio/holdings/:ticker` | Remove holding |
-| `GET` | `/api/portfolio/optimize` | Get optimization suggestion |
-| `POST` | `/api/portfolio/simulate` | Run scenario simulation |
-| `GET` | `/api/portfolio/simulations` | Get past simulation results |
+| `GET` | `/api/portfolio/optimize` | Get MPT optimization suggestion |
 
 **Holdings response:**
 ```json
 {
   "holdings": [
-    { "ticker": "AAPL", "shares": 50, "avg_cost": 195.00, "current_price": 214.32, "pnl_pct": 9.9 }
+    { "ticker": "AAPL", "shares": 50, "avgCost": 195.00, "currentPrice": 214.32, "pnlPct": 9.9 }
   ],
   "metrics": {
-    "expected_return": 0.142,
+    "expectedReturn": 0.142,
     "volatility": 0.187,
-    "sharpe_ratio": 1.34,
-    "diversification_score": 72
+    "sharpeRatio": 1.34,
+    "diversificationScore": 72
   }
 }
 ```
@@ -261,51 +273,70 @@ GET /api/portfolio/optimize?risk=moderate
 **Optimize response:**
 ```json
 {
-  "suggested_weights": {
-    "AAPL": 0.30,
-    "NVDA": 0.25,
-    "MSFT": 0.25,
-    "SPY":  0.20
-  },
-  "projected_return": 0.168,
-  "projected_volatility": 0.172,
-  "method": "mean_variance"
+  "suggestedWeights": { "AAPL": 0.30, "NVDA": 0.25, "MSFT": 0.25, "SPY": 0.20 },
+  "projectedReturn": 0.168,
+  "projectedVolatility": 0.172,
+  "method": "projected_gradient_ascent"
 }
 ```
 
-**Simulate request:**
+**Compute logic (`services/portfolio.ts`):**
+- Metrics: covariance matrix (`lib/historicalPrices.ts`, Yahoo Finance 24h cache), Sharpe, HHI diversification
+- Optimization: projected gradient ascent on `U = μ − A×σ²`, simplex projection (Duchi 2008), 500 iterations
+
+---
+
+### Use Case 6 — Paper Trading (Simulate) — `/api/simulate`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/simulate` | List all simulated portfolios for user |
+| `POST` | `/api/simulate` | Create a new simulated portfolio |
+| `GET` | `/api/simulate/:id` | Get portfolio with live-enriched holdings + metrics |
+| `DELETE` | `/api/simulate/:id` | Delete portfolio |
+| `POST` | `/api/simulate/:id/holdings` | Add holding (locks in current market price as startPrice) |
+| `DELETE` | `/api/simulate/:id/holdings/:ticker` | Remove holding |
+
+**Create portfolio request:**
 ```json
-POST /api/portfolio/simulate
-{
-  "scenario": {
-    "type": "market_downturn",   // market_downturn | sector_shock | volatility_spike
-    "magnitude": -0.20,          // -20% market drop
-    "duration_days": 90
-  },
-  "runs": 1000
-}
+POST /api/simulate
+{ "name": "Tech Growth Play", "description": "Bet on AI tailwind Q2" }
 ```
 
-**Simulate response:**
+**Portfolio response (with enriched holdings):**
 ```json
 {
-  "simulation_id": "uuid",
-  "expected_outcome": -0.12,
-  "upside_p90": 0.05,
-  "downside_p10": -0.28,
-  "probability_bands": [
-    { "range": [-0.30, -0.20], "probability": 0.15 },
-    { "range": [-0.20, -0.10], "probability": 0.40 },
-    { "range": [-0.10,  0.00], "probability": 0.30 },
-    { "range": [0.00,   0.10], "probability": 0.15 }
-  ]
+  "id": "uuid",
+  "name": "Tech Growth Play",
+  "holdings": [
+    {
+      "ticker": "NVDA",
+      "shares": 10,
+      "startPrice": 875.50,
+      "currentPrice": 912.30,
+      "returnPct": 4.2
+    }
+  ],
+  "metrics": {
+    "totalStartValue": 8755.00,
+    "totalCurrentValue": 9123.00,
+    "totalReturnPct": 4.2,
+    "topGainer": { "ticker": "NVDA", "returnPct": 4.2 },
+    "topLoser": null
+  }
 }
 ```
 
-**Compute logic (Node, internal `lib/portfolio.js`):**
-- Metrics: covariance matrix + Sharpe via `ml-matrix` + `simple-statistics`
-- Optimization: mean-variance efficient frontier (gradient descent on weights)
-- Simulation: Monte Carlo with correlated returns via Cholesky decomposition (`ml-matrix`)
+**Error cases:**
+- `404` — portfolio not found or belongs to different user
+- `409` — ticker already in this portfolio
+- `404` — ticker not found in asset DB
+
+**Compute logic (`services/simulate.ts`):**
+- `startPrice` locked at add time from live Finnhub quote
+- `currentPrice` fetched via `Promise.allSettled` on GET (falls back to `startPrice` if quote fails)
+- Multiple portfolios per user, each independently tracked — enables side-by-side strategy comparison
+- Comparison leaderboard shown in UI when ≥2 portfolios have holdings
 
 ---
 

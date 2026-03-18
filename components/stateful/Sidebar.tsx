@@ -8,7 +8,7 @@ import { useState, useEffect } from "react";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "⊞" },  // grid overview
   { href: "/watchlist", label: "Watchlist",  icon: "★" },  // starred/watched
-  { href: "/alerts",    label: "Alerts",     icon: "⚡" }, // lightning = alert
+  { href: "/alerts",    label: "Alerts",     icon: "⚑" },  // flag = flagged/alert
   { href: "/news",      label: "News",       icon: "☰" },  // lines = feed/newspaper
   { href: "/signals",   label: "Signals",    icon: "↗" },  // trending up
   { href: "/portfolio", label: "Portfolio",  icon: "⊕" },  // holdings/positions

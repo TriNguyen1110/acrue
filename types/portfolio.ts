@@ -10,6 +10,7 @@ export interface PortfolioHolding {
   marketValue: number;
   pnl: number;
   pnlPct: number;
+  annualVolPct: number | null; // % annualised vol from 52w range proxy
   updatedAt: string;
 }
 

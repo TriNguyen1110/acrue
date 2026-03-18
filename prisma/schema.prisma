@@ -27,14 +27,15 @@ model User {
   preferences  Json     @default("{}")
   createdAt    DateTime @default(now())
 
-  watchlist          Watchlist[]
-  alerts             Alert[]
-  alertRules         AlertRule[]
-  signalScores       SignalScore[]
-  portfolioHoldings  PortfolioHolding[]
-  portfolioSnapshots PortfolioSnapshot[]
-  simulations        Simulation[]
-  newsReads          UserNewsRead[]
+  watchlist            Watchlist[]
+  alerts               Alert[]
+  alertRules           AlertRule[]
+  signalScores         SignalScore[]
+  portfolioHoldings    PortfolioHolding[]
+  portfolioSnapshots   PortfolioSnapshot[]
+  simulations          Simulation[]
+  simulatedPortfolios  SimulatedPortfolio[]
+  newsReads            UserNewsRead[]
 }
 
 model Watchlist {
@@ -166,4 +167,30 @@ model Simulation {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt(sort: Desc)])
+}
+
+model SimulatedPortfolio {
+  id          String             @id @default(uuid())
+  userId      String
+  name        String
+  description String?
+  createdAt   DateTime           @default(now())
+
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdings SimulatedHolding[]
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model SimulatedHolding {
+  id        String   @id @default(uuid())
+  simPortId String
+  ticker    String
+  shares    Float
+  startPrice Float   // market price at the moment the holding was added
+
+  simPortfolio SimulatedPortfolio @relation(fields: [simPortId], references: [id], onDelete: Cascade)
+
+  @@unique([simPortId, ticker])
+  @@index([simPortId])
 }

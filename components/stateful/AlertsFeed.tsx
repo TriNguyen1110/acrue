@@ -56,6 +56,7 @@ interface ActiveFilters {
   tickers:    Set<string>;
   sectors:    Set<string>;
   capTiers:   Set<string>;
+  topics:     Set<string>;
   etfOnly:    boolean;
 }
 
@@ -66,6 +67,7 @@ function emptyFilters(): ActiveFilters {
     tickers:    new Set(),
     sectors:    new Set(),
     capTiers:   new Set(),
+    topics:     new Set(),
     etfOnly:    false,
   };
 }
@@ -77,11 +79,16 @@ function hasActiveFilters(f: ActiveFilters): boolean {
     f.tickers.size > 0 ||
     f.sectors.size > 0 ||
     f.capTiers.size > 0 ||
+    f.topics.size > 0 ||
     f.etfOnly
   );
 }
 
-function applyFiltersSort(alerts: Alert[], filters: ActiveFilters, sort: SortKey): Alert[] {
+function applyFiltersSort(
+  alerts: Alert[],
+  filters: ActiveFilters,
+  sort: SortKey,
+): Alert[] {
   let out = [...alerts];
 
   if (filters.types.size > 0)      out = out.filter((a) => filters.types.has(a.type));
@@ -94,6 +101,9 @@ function applyFiltersSort(alerts: Alert[], filters: ActiveFilters, sort: SortKey
       const tier = capTierLabel(a.marketCap);
       return filters.capTiers.has(tier);
     });
+  }
+  if (filters.topics.size > 0) {
+    out = out.filter((a) => !!a.industry && filters.topics.has(a.industry));
   }
   if (filters.etfOnly) out = out.filter((a) => a.assetType === "ETP" || a.assetType === "ETF");
 
@@ -211,7 +221,7 @@ interface FilterPanelProps {
 function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) {
   const active = hasActiveFilters(filters);
 
-  function toggle<K extends "types" | "severities" | "tickers" | "sectors" | "capTiers">(
+  function toggle<K extends "types" | "severities" | "tickers" | "sectors" | "capTiers" | "topics">(
     key: K,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     value: any
@@ -313,6 +323,20 @@ function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) 
         </FilterGroup>
       )}
 
+      {/* Topics (ticker industry categories) */}
+      {options.industries.length > 0 && (
+        <FilterGroup title="Topic" defaultOpen={false}>
+          {options.industries.map((ind) => (
+            <FilterChip
+              key={ind}
+              label={ind}
+              active={filters.topics.has(ind)}
+              onClick={() => toggle("topics", ind)}
+            />
+          ))}
+        </FilterGroup>
+      )}
+
       {/* ETF */}
       {options.hasEtf && (
         <FilterGroup title="Asset Type" defaultOpen={false}>
@@ -344,6 +368,7 @@ function ActiveChips({ filters, onChange }: ActiveChipsProps) {
   for (const t of filters.tickers)    chips.push({ label: t,                      onRemove: () => onChange({ ...filters, tickers: toggleSet(filters.tickers, t) }) });
   for (const s of filters.sectors)    chips.push({ label: s,                      onRemove: () => onChange({ ...filters, sectors: toggleSet(filters.sectors, s) }) });
   for (const c of filters.capTiers)   chips.push({ label: `Cap ${c}`,             onRemove: () => onChange({ ...filters, capTiers: toggleSet(filters.capTiers, c) }) });
+  for (const tp of filters.topics)    chips.push({ label: tp,                     onRemove: () => onChange({ ...filters, topics: toggleSet(filters.topics, tp) }) });
   if (filters.etfOnly)                chips.push({ label: "ETF / ETP",            onRemove: () => onChange({ ...filters, etfOnly: false }) });
 
   return (
@@ -645,7 +670,7 @@ export default function AlertsFeed() {
               Filters
               {hasActiveFilters(filters) && (
                 <span className="ml-0.5 h-4 w-4 rounded-full bg-gold-600/40 text-[9px] flex items-center justify-center text-gold-400 font-bold">
-                  {[...filters.types, ...filters.severities, ...filters.tickers, ...filters.sectors, ...filters.capTiers].length + (filters.etfOnly ? 1 : 0)}
+                  {[...filters.types, ...filters.severities, ...filters.tickers, ...filters.sectors, ...filters.capTiers, ...filters.topics].length + (filters.etfOnly ? 1 : 0)}
                 </span>
               )}
             </button>

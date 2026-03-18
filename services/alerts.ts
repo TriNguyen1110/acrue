@@ -31,11 +31,11 @@ export interface AlertFilters {
 }
 
 export interface AlertFilterOptions {
-  tickers: string[];
-  sectors: string[];
+  tickers:    string[];
+  sectors:    string[];
   industries: string[];
-  capTiers: string[];  // e.g. ">$200B", ">$10B" ...
-  hasEtf: boolean;
+  capTiers:   string[];  // e.g. ">$200B", ">$10B" ...
+  hasEtf:     boolean;
 }
 
 const CAP_TIER_ORDER = [">$200B", ">$10B", ">$2B", ">$300M", "<$300M"];
@@ -54,25 +54,32 @@ function capTierLabel(marketCap: number): string {
  */
 export async function getAlertFilterOptions(userId: string): Promise<AlertFilterOptions> {
   // Grab distinct tickers across all user alerts
-  const tickerRows = await prisma.alert.findMany({
-    where:    { userId },
-    select:   { ticker: true },
-    distinct: ["ticker"],
-    orderBy:  { ticker: "asc" },
-  });
-  const tickers = tickerRows.map((r) => r.ticker);
+  // Alert tickers → Ticker filter chips; watchlist tickers → broader industry/sector coverage
+  const [alertTickerRows, watchlistRows] = await Promise.all([
+    prisma.alert.findMany({
+      where:    { userId },
+      select:   { ticker: true },
+      distinct: ["ticker"],
+    }),
+    prisma.watchlist.findMany({
+      where:  { userId },
+      select: { ticker: true },
+    }),
+  ]);
+  const alertTickers    = alertTickerRows.map((r) => r.ticker).sort();
+  const allTickers      = [...new Set([...alertTickers, ...watchlistRows.map((r) => r.ticker)])].sort();
 
-  if (tickers.length === 0) {
+  if (allTickers.length === 0) {
     return { tickers: [], sectors: [], industries: [], capTiers: [], hasEtf: false };
   }
 
   const [assets, profiles] = await Promise.all([
     prisma.asset.findMany({
-      where:  { ticker: { in: tickers } },
+      where:  { ticker: { in: allTickers } },
       select: { ticker: true, sector: true, industry: true, type: true },
     }),
     Promise.all(
-      tickers.map((t) =>
+      alertTickers.map((t) =>
         redis.get(`finnhub:profile:${t}`).then((v) => ({ ticker: t, raw: v }))
       )
     ),
@@ -100,7 +107,7 @@ export async function getAlertFilterOptions(userId: string): Promise<AlertFilter
   }
 
   return {
-    tickers,
+    tickers:    alertTickers,
     sectors:    [...sectors].sort(),
     industries: [...industries].sort(),
     capTiers:   CAP_TIER_ORDER.filter((t) => capTierSet.has(t)),

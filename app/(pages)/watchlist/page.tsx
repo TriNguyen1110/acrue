@@ -6,13 +6,17 @@ export default async function WatchlistPage() {
 
   return (
     <main className="px-8 py-8 max-w-7xl">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="font-display text-4xl text-gold-400 mb-1">Watchlist</h1>
-          <p className="text-text-secondary text-sm">Track and monitor your assets in real time.</p>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
+      <div className="mb-8 text-center">
+        <h1
+          className="font-display text-4xl text-gold-400 mb-2"
+          style={{ textShadow: "0 0 24px rgba(247,243,229,0.35), 0 0 48px rgba(247,243,229,0.12)" }}
+        >
+          Watchlist
+        </h1>
+        <p className="text-text-secondary text-sm max-w-xl mx-auto mb-3">
+          Monitor live prices, volume, and intraday moves for every ticker on your radar. Prices refresh every 60 seconds.
+        </p>
+        <div className="flex items-center justify-center gap-2">
           {market.isOpen ? (
             <>
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />

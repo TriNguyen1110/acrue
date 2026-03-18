@@ -30,6 +30,84 @@ export interface AlertFilters {
   severity?: AlertSeverity;
 }
 
+export interface AlertFilterOptions {
+  tickers: string[];
+  sectors: string[];
+  industries: string[];
+  capTiers: string[];  // e.g. ">$200B", ">$10B" ...
+  hasEtf: boolean;
+}
+
+const CAP_TIER_ORDER = [">$200B", ">$10B", ">$2B", ">$300M", "<$300M"];
+
+function capTierLabel(marketCap: number): string {
+  if (marketCap >= 200e9)  return ">$200B";
+  if (marketCap >= 10e9)   return ">$10B";
+  if (marketCap >= 2e9)    return ">$2B";
+  if (marketCap >= 300e6)  return ">$300M";
+  return "<$300M";
+}
+
+/**
+ * Returns all distinct filter values across every alert for this user.
+ * Not paginated — scans the full alert history to ensure no tags are hidden.
+ */
+export async function getAlertFilterOptions(userId: string): Promise<AlertFilterOptions> {
+  // Grab distinct tickers across all user alerts
+  const tickerRows = await prisma.alert.findMany({
+    where:    { userId },
+    select:   { ticker: true },
+    distinct: ["ticker"],
+    orderBy:  { ticker: "asc" },
+  });
+  const tickers = tickerRows.map((r) => r.ticker);
+
+  if (tickers.length === 0) {
+    return { tickers: [], sectors: [], industries: [], capTiers: [], hasEtf: false };
+  }
+
+  const [assets, profiles] = await Promise.all([
+    prisma.asset.findMany({
+      where:  { ticker: { in: tickers } },
+      select: { ticker: true, sector: true, industry: true, type: true },
+    }),
+    Promise.all(
+      tickers.map((t) =>
+        redis.get(`finnhub:profile:${t}`).then((v) => ({ ticker: t, raw: v }))
+      )
+    ),
+  ]);
+
+  const sectors    = new Set<string>();
+  const industries = new Set<string>();
+  let   hasEtf     = false;
+
+  for (const a of assets) {
+    if (a.sector)   sectors.add(a.sector);
+    if (a.industry) industries.add(a.industry);
+    if (a.type === "ETP" || a.type === "ETF") hasEtf = true;
+  }
+
+  const capTierSet = new Set<string>();
+  for (const { raw } of profiles) {
+    if (!raw) continue;
+    try {
+      const p = JSON.parse(raw) as { marketCapitalization?: number };
+      if (p.marketCapitalization) {
+        capTierSet.add(capTierLabel(p.marketCapitalization * 1_000_000));
+      }
+    } catch { /* ignore */ }
+  }
+
+  return {
+    tickers,
+    sectors:    [...sectors].sort(),
+    industries: [...industries].sort(),
+    capTiers:   CAP_TIER_ORDER.filter((t) => capTierSet.has(t)),
+    hasEtf,
+  };
+}
+
 export async function getUserAlerts(
   userId: string,
   page = 1,

@@ -27,20 +27,9 @@ const SEVERITY_BORDER: Record<AlertSeverity, string> = {
   low:    "",
 };
 
-// ── Filter / Sort config ───────────────────────────────────────────────────────
+const SEVERITY_RANK: Record<AlertSeverity, number> = { high: 0, medium: 1, low: 2 };
 
-type FilterKey = "all" | AlertType | "high_priority";
-type SortKey   = "newest" | "oldest" | "severity" | "ticker_az";
-
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all",          label: "All"         },
-  { key: "price_change", label: "Price"       },
-  { key: "volume_spike", label: "Volume"      },
-  { key: "volatility",   label: "Volatility"  },
-  { key: "rsi",          label: "RSI"         },
-  { key: "ema_cross",    label: "EMA"         },
-  { key: "high_priority",label: "High Priority" },
-];
+type SortKey = "newest" | "oldest" | "severity" | "ticker_az";
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: "newest",    label: "Newest"    },
@@ -49,86 +38,64 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: "ticker_az", label: "Ticker A–Z" },
 ];
 
-const SEVERITY_RANK: Record<AlertSeverity, number> = { high: 0, medium: 1, low: 2 };
+// ── Filter options from API ───────────────────────────────────────────────────
 
-function capTierLabel(marketCap: number | undefined): string | null {
-  if (!marketCap) return null;
-  if (marketCap >= 200e9)  return ">$200B";
-  if (marketCap >= 10e9)   return ">$10B";
-  if (marketCap >= 2e9)    return ">$2B";
-  if (marketCap >= 300e6)  return ">$300M";
-  return "<$300M";
+interface AlertFilterOptions {
+  tickers:    string[];
+  sectors:    string[];
+  industries: string[];
+  capTiers:   string[];
+  hasEtf:     boolean;
 }
 
-const CAP_TIER_ORDER = [">$200B", ">$10B", ">$2B", ">$300M", "<$300M"];
+// ── Active filters state ──────────────────────────────────────────────────────
 
-/** Derive available classification chips from the current alerts batch. */
-function getClassificationChips(alerts: Alert[]): { key: string; label: string }[] {
-  const sectors    = new Set<string>();
-  const industries = new Set<string>();
-  const capTiers   = new Set<string>();
-  let hasEtf = false;
-
-  for (const a of alerts) {
-    if (a.sector)    sectors.add(a.sector);
-    if (a.industry)  industries.add(a.industry);
-    if (a.assetType && (a.assetType === "ETP" || a.assetType === "ETF")) hasEtf = true;
-    const tier = capTierLabel(a.marketCap);
-    if (tier) capTiers.add(tier);
-  }
-
-  const chips: { key: string; label: string }[] = [{ key: "__all__", label: "All Tickers" }];
-
-  for (const s of [...sectors].sort()) chips.push({ key: `sector:${s}`, label: s });
-  // Show industry only when it adds granularity beyond sector
-  if (industries.size > sectors.size) {
-    for (const ind of [...industries].sort()) chips.push({ key: `industry:${ind}`, label: ind });
-  }
-  // Cap tier chips in descending order
-  for (const tier of CAP_TIER_ORDER.filter((t) => capTiers.has(t))) {
-    chips.push({ key: `cap:${tier}`, label: `Cap ${tier}` });
-  }
-  if (hasEtf) chips.push({ key: "type:etf", label: "ETF / ETP" });
-
-  return chips;
+interface ActiveFilters {
+  types:      Set<AlertType>;
+  severities: Set<AlertSeverity>;
+  tickers:    Set<string>;
+  sectors:    Set<string>;
+  capTiers:   Set<string>;
+  etfOnly:    boolean;
 }
 
-function applyFilterSort(
-  alerts: Alert[],
-  filter: FilterKey,
-  classFilter: string,
-  tickerFilter: string,
-  sort: SortKey
-): Alert[] {
+function emptyFilters(): ActiveFilters {
+  return {
+    types:      new Set(),
+    severities: new Set(),
+    tickers:    new Set(),
+    sectors:    new Set(),
+    capTiers:   new Set(),
+    etfOnly:    false,
+  };
+}
+
+function hasActiveFilters(f: ActiveFilters): boolean {
+  return (
+    f.types.size > 0 ||
+    f.severities.size > 0 ||
+    f.tickers.size > 0 ||
+    f.sectors.size > 0 ||
+    f.capTiers.size > 0 ||
+    f.etfOnly
+  );
+}
+
+function applyFiltersSort(alerts: Alert[], filters: ActiveFilters, sort: SortKey): Alert[] {
   let out = [...alerts];
 
-  // Ticker filter
-  if (tickerFilter !== "__all__") {
-    out = out.filter((a) => a.ticker === tickerFilter);
+  if (filters.types.size > 0)      out = out.filter((a) => filters.types.has(a.type));
+  if (filters.severities.size > 0) out = out.filter((a) => filters.severities.has(a.severity));
+  if (filters.tickers.size > 0)    out = out.filter((a) => filters.tickers.has(a.ticker));
+  if (filters.sectors.size > 0)    out = out.filter((a) => !!a.sector && filters.sectors.has(a.sector));
+  if (filters.capTiers.size > 0) {
+    out = out.filter((a) => {
+      if (!a.marketCap) return false;
+      const tier = capTierLabel(a.marketCap);
+      return filters.capTiers.has(tier);
+    });
   }
-
-  // Trigger-type filter
-  if (filter === "high_priority") {
-    out = out.filter((a) => a.severity === "high");
-  } else if (filter !== "all") {
-    out = out.filter((a) => a.type === filter);
-  }
-
-  // Ticker classification filter
-  if (classFilter !== "__all__") {
-    if (classFilter.startsWith("sector:")) {
-      const v = classFilter.slice(7);
-      out = out.filter((a) => a.sector === v);
-    } else if (classFilter.startsWith("industry:")) {
-      const v = classFilter.slice(9);
-      out = out.filter((a) => a.industry === v);
-    } else if (classFilter.startsWith("cap:")) {
-      const tier = classFilter.slice(4);
-      out = out.filter((a) => capTierLabel(a.marketCap) === tier);
-    } else if (classFilter === "type:etf") {
-      out = out.filter((a) => a.assetType === "ETP" || a.assetType === "ETF");
-    }
-  }
+  if (filters.etfOnly) out = out.filter((a) => a.assetType === "ETP" || a.assetType === "ETF");
 
   out.sort((a, b) => {
     switch (sort) {
@@ -140,6 +107,265 @@ function applyFilterSort(
   });
 
   return out;
+}
+
+function capTierLabel(marketCap: number): string {
+  if (marketCap >= 200e9)  return ">$200B";
+  if (marketCap >= 10e9)   return ">$10B";
+  if (marketCap >= 2e9)    return ">$2B";
+  if (marketCap >= 300e6)  return ">$300M";
+  return "<$300M";
+}
+
+// ── Toggle helpers ────────────────────────────────────────────────────────────
+
+function toggleSet<T>(prev: Set<T>, value: T): Set<T> {
+  const next = new Set(prev);
+  if (next.has(value)) next.delete(value); else next.add(value);
+  return next;
+}
+
+// ── LeetCode-style filter panel ───────────────────────────────────────────────
+
+const ALERT_TYPES: { key: AlertType; label: string }[] = [
+  { key: "price_change", label: "Price Change" },
+  { key: "volatility",   label: "Volatility"   },
+  { key: "price_level",  label: "Price Level"  },
+  { key: "volume_spike", label: "Volume Spike" },
+  { key: "rsi",          label: "RSI"          },
+  { key: "ema_cross",    label: "EMA Cross"    },
+];
+
+const SEVERITIES: { key: AlertSeverity; label: string; color: string }[] = [
+  { key: "high",   label: "High",   color: "text-rose-400  border-rose-500/40  bg-rose-500/10"  },
+  { key: "medium", label: "Medium", color: "text-amber-400 border-amber-500/40 bg-amber-500/10" },
+  { key: "low",    label: "Low",    color: "text-text-muted border-navy-600    bg-transparent"  },
+];
+
+interface FilterGroupProps {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}
+
+function FilterGroup({ title, defaultOpen = true, children }: FilterGroupProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-b last:border-0" style={{ borderColor: "rgba(247,243,229,0.06)" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left group"
+      >
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted group-hover:text-text-secondary transition-colors">
+          {title}
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && <div className="px-3 pb-3 flex flex-wrap gap-1.5">{children}</div>}
+    </div>
+  );
+}
+
+interface FilterChipProps {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  colorClass?: string;
+}
+
+function FilterChip({ label, active, onClick, colorClass }: FilterChipProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
+        active
+          ? colorClass ?? "bg-gold-600/20 border-gold-600/40 text-gold-400"
+          : "bg-transparent border-navy-700 text-text-muted hover:border-navy-500 hover:text-text-secondary"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+interface FilterPanelProps {
+  options:  AlertFilterOptions;
+  filters:  ActiveFilters;
+  onChange: (f: ActiveFilters) => void;
+  onClear:  () => void;
+}
+
+function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) {
+  const active = hasActiveFilters(filters);
+
+  function toggle<K extends "types" | "severities" | "tickers" | "sectors" | "capTiers">(
+    key: K,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    value: any
+  ) {
+    onChange({ ...filters, [key]: toggleSet(filters[key], value) });
+  }
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden mb-4"
+      style={{ background: "rgba(10,22,40,0.8)", border: "1px solid rgba(247,243,229,0.08)" }}
+    >
+      {/* Panel header */}
+      <div
+        className="flex items-center justify-between px-4 py-2.5 border-b"
+        style={{ borderColor: "rgba(247,243,229,0.08)" }}
+      >
+        <div className="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">Filters</span>
+        </div>
+        {active && (
+          <button
+            onClick={onClear}
+            className="text-[10px] text-text-muted hover:text-gold-400 transition-colors"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+
+      {/* Alert Type */}
+      <FilterGroup title="Alert Type">
+        {ALERT_TYPES.map((t) => (
+          <FilterChip
+            key={t.key}
+            label={t.label}
+            active={filters.types.has(t.key)}
+            onClick={() => toggle("types", t.key)}
+          />
+        ))}
+      </FilterGroup>
+
+      {/* Severity */}
+      <FilterGroup title="Severity">
+        {SEVERITIES.map((s) => (
+          <FilterChip
+            key={s.key}
+            label={s.label}
+            active={filters.severities.has(s.key)}
+            onClick={() => toggle("severities", s.key)}
+            colorClass={s.color}
+          />
+        ))}
+      </FilterGroup>
+
+      {/* Ticker */}
+      {options.tickers.length > 0 && (
+        <FilterGroup title="Ticker">
+          {options.tickers.map((t) => (
+            <FilterChip
+              key={t}
+              label={t}
+              active={filters.tickers.has(t)}
+              onClick={() => toggle("tickers", t)}
+              colorClass="bg-gold-600/20 border-gold-600/40 text-gold-400 font-mono"
+            />
+          ))}
+        </FilterGroup>
+      )}
+
+      {/* Sector */}
+      {options.sectors.length > 0 && (
+        <FilterGroup title="Sector" defaultOpen={false}>
+          {options.sectors.map((s) => (
+            <FilterChip
+              key={s}
+              label={s}
+              active={filters.sectors.has(s)}
+              onClick={() => toggle("sectors", s)}
+            />
+          ))}
+        </FilterGroup>
+      )}
+
+      {/* Cap Tier */}
+      {options.capTiers.length > 0 && (
+        <FilterGroup title="Market Cap" defaultOpen={false}>
+          {options.capTiers.map((tier) => (
+            <FilterChip
+              key={tier}
+              label={`Cap ${tier}`}
+              active={filters.capTiers.has(tier)}
+              onClick={() => toggle("capTiers", tier)}
+            />
+          ))}
+        </FilterGroup>
+      )}
+
+      {/* ETF */}
+      {options.hasEtf && (
+        <FilterGroup title="Asset Type" defaultOpen={false}>
+          <FilterChip
+            label="ETF / ETP"
+            active={filters.etfOnly}
+            onClick={() => onChange({ ...filters, etfOnly: !filters.etfOnly })}
+          />
+        </FilterGroup>
+      )}
+    </div>
+  );
+}
+
+// ── Active filter chips bar ───────────────────────────────────────────────────
+
+interface ActiveChipsProps {
+  filters:  ActiveFilters;
+  onChange: (f: ActiveFilters) => void;
+}
+
+function ActiveChips({ filters, onChange }: ActiveChipsProps) {
+  if (!hasActiveFilters(filters)) return null;
+
+  const chips: { label: string; onRemove: () => void }[] = [];
+
+  for (const t of filters.types)      chips.push({ label: t.replace("_", " "),   onRemove: () => onChange({ ...filters, types: toggleSet(filters.types, t) }) });
+  for (const s of filters.severities) chips.push({ label: s,                      onRemove: () => onChange({ ...filters, severities: toggleSet(filters.severities, s) }) });
+  for (const t of filters.tickers)    chips.push({ label: t,                      onRemove: () => onChange({ ...filters, tickers: toggleSet(filters.tickers, t) }) });
+  for (const s of filters.sectors)    chips.push({ label: s,                      onRemove: () => onChange({ ...filters, sectors: toggleSet(filters.sectors, s) }) });
+  for (const c of filters.capTiers)   chips.push({ label: `Cap ${c}`,             onRemove: () => onChange({ ...filters, capTiers: toggleSet(filters.capTiers, c) }) });
+  if (filters.etfOnly)                chips.push({ label: "ETF / ETP",            onRemove: () => onChange({ ...filters, etfOnly: false }) });
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mb-3">
+      <span className="text-[10px] text-text-muted uppercase tracking-wider">Active:</span>
+      {chips.map((c, i) => (
+        <span
+          key={i}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border bg-navy-700 border-navy-500 text-text-secondary"
+        >
+          {c.label}
+          <button
+            onClick={c.onRemove}
+            className="ml-0.5 text-text-muted hover:text-red-400 transition-colors leading-none"
+            aria-label={`Remove ${c.label} filter`}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+    </div>
+  );
 }
 
 // ── Skeleton rows ─────────────────────────────────────────────────────────────
@@ -171,8 +397,8 @@ function FeedSkeleton() {
 interface AlertRowProps {
   alert: Alert;
   onMarkRead: (id: string) => void;
-  onDismiss: (id: string) => void;
-  onSelect: (ticker: string) => void;
+  onDismiss:  (id: string) => void;
+  onSelect:   (ticker: string) => void;
 }
 
 function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
@@ -189,9 +415,7 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
     onDismiss(alert.id);
   }
 
-  const unreadBg = !alert.read
-    ? "rgba(15,31,56,0.55)"
-    : "transparent";
+  const unreadBg = !alert.read ? "rgba(15,31,56,0.55)" : "transparent";
 
   return (
     <div
@@ -202,17 +426,11 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
         border-b last:border-0
         ${SEVERITY_BORDER[alert.severity]}
       `}
-      style={{
-        background: unreadBg,
-        borderBottomColor: "rgba(247,243,229,0.06)",
-      }}
+      style={{ background: unreadBg, borderBottomColor: "rgba(247,243,229,0.06)" }}
     >
-      {/* Severity */}
       <div className="shrink-0">
         <AlertBadge severity={alert.severity} size="sm" />
       </div>
-
-      {/* Ticker */}
       <span
         className={`font-mono text-sm shrink-0 w-14 ${
           !alert.read ? "text-gold-400 font-semibold" : "text-text-secondary font-medium"
@@ -220,14 +438,10 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
       >
         {alert.ticker}
       </span>
-
-      {/* Cause */}
       <div className="flex items-center gap-1 shrink-0">
         <span className="text-[9px] text-text-muted uppercase tracking-wider">via</span>
         <AlertTypeBadge type={alert.type} size="sm" />
       </div>
-
-      {/* Message */}
       <p
         className={`flex-1 min-w-0 text-xs truncate ${
           !alert.read ? "text-text-primary" : "text-text-secondary"
@@ -235,13 +449,9 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
       >
         {alert.message}
       </p>
-
-      {/* Time */}
       <span className="text-[11px] text-text-muted font-mono shrink-0">
         {timeAgo(alert.triggeredAt)}
       </span>
-
-      {/* Dismiss (hover) */}
       <button
         onClick={handleDismiss}
         disabled={dismissing}
@@ -263,7 +473,7 @@ function AlertRow({ alert, onMarkRead, onDismiss, onSelect }: AlertRowProps) {
   );
 }
 
-// ── Empty states ─────────────────────────────────────────────────────────────
+// ── Empty states ──────────────────────────────────────────────────────────────
 
 function EmptyNoWatchlist() {
   return (
@@ -289,7 +499,6 @@ function EmptyNoAlerts() {
       style={{ background: "rgba(10,22,40,0.8)", border: "1px solid rgba(247,243,229,0.08)" }}
     >
       <div className="flex items-center justify-center gap-2 mb-3">
-        {/* Subtle pulse indicator */}
         <span className="relative flex h-2 w-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
@@ -305,37 +514,36 @@ function EmptyNoAlerts() {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function AlertsFeed() {
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [alerts,       setAlerts]       = useState<Alert[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState<string | null>(null);
   const [hasWatchlist, setHasWatchlist] = useState<boolean | null>(null);
 
-  const [page, setPage] = useState(1);
+  const [page,       setPage]       = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const [filter, setFilter]           = useState<FilterKey>("all");
-  const [classFilter, setClassFilter] = useState<string>("__all__");
-  const [tickerFilter, setTickerFilter] = useState<string>("__all__");
-  const [sort, setSort]               = useState<SortKey>("newest");
+  const [sort,    setSort]    = useState<SortKey>("newest");
+  const [filters, setFilters] = useState<ActiveFilters>(emptyFilters);
+  const [showFilters, setShowFilters] = useState(true);
 
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
-  const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
-  const [showTickerPicker, setShowTickerPicker] = useState(false);
+  const [filterOptions, setFilterOptions] = useState<AlertFilterOptions>({
+    tickers: [], sectors: [], industries: [], capTiers: [], hasEtf: false,
+  });
+
+  const [selectedTicker,    setSelectedTicker]    = useState<string | null>(null);
+  const [watchlistTickers,  setWatchlistTickers]  = useState<string[]>([]);
+  const [showTickerPicker,  setShowTickerPicker]  = useState(false);
 
   const LIMIT = 20;
 
-  const loadAlerts = useCallback(async (p: number, f: FilterKey) => {
+  const loadAlerts = useCallback(async (p: number) => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ page: String(p), limit: String(LIMIT) });
-      if (f !== "all" && f !== "high_priority") params.set("type", f);
-      if (f === "high_priority") params.set("severity", "high");
-
       const res = await fetch(`/api/v1/alerts?${params}`);
       if (!res.ok) throw new Error();
-
       const data: PaginatedAlerts = await res.json();
       setAlerts(data.alerts);
       setTotalPages(Math.max(1, Math.ceil(data.total / LIMIT)));
@@ -347,7 +555,15 @@ export default function AlertsFeed() {
     }
   }, []);
 
-  // Check watchlist
+  // Load filter options once (full history, not paginated)
+  useEffect(() => {
+    fetch("/api/v1/alerts/filters")
+      .then((r) => r.json())
+      .then((d: AlertFilterOptions) => setFilterOptions(d))
+      .catch(() => {});
+  }, []);
+
+  // Load watchlist for "Manage Rules"
   useEffect(() => {
     fetch("/api/v1/watchlist")
       .then((r) => r.json())
@@ -360,24 +576,18 @@ export default function AlertsFeed() {
   }, []);
 
   useEffect(() => {
-    loadAlerts(page, filter);
-  }, [page, filter, loadAlerts]);
+    loadAlerts(page);
+  }, [page, loadAlerts]);
 
-  // Reset page when filters change
-  useEffect(() => {
-    setPage(1);
-  }, [filter, classFilter, tickerFilter]);
+  // Reset page on filter/sort change
+  useEffect(() => { setPage(1); }, [filters, sort]);
 
   async function handleMarkRead(id: string) {
     try {
       await fetch(`/api/v1/alerts/${id}/read`, { method: "PATCH" });
-      setAlerts((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, read: true } : a))
-      );
+      setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, read: true } : a)));
       setUnreadCount((n) => Math.max(0, n - 1));
-    } catch {
-      // silently fail
-    }
+    } catch { /* silent */ }
   }
 
   async function handleMarkAllRead() {
@@ -385,26 +595,22 @@ export default function AlertsFeed() {
       await fetch("/api/v1/alerts/read-all", { method: "PATCH" });
       setAlerts((prev) => prev.map((a) => ({ ...a, read: true })));
       setUnreadCount(0);
-    } catch {
-      // silently fail
-    }
+    } catch { /* silent */ }
   }
 
   async function handleDismiss(id: string) {
     try {
       await fetch(`/api/v1/alerts/${id}`, { method: "DELETE" });
       setAlerts((prev) => prev.filter((a) => a.id !== id));
-    } catch {
-      // silently fail
-    }
+    } catch { /* silent */ }
   }
 
-  const classChips = getClassificationChips(alerts);
-  const displayed  = applyFilterSort(alerts, filter, classFilter, tickerFilter, sort);
+  const displayed = applyFiltersSort(alerts, filters, sort);
 
   return (
     <>
-      <div className="space-y-5">
+      <div className="space-y-4">
+
         {/* Header row */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -424,7 +630,27 @@ export default function AlertsFeed() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Manage Rules button */}
+            {/* Toggle filter panel */}
+            <button
+              onClick={() => setShowFilters((v) => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                showFilters
+                  ? "bg-gold-600/15 border-gold-600/35 text-gold-400"
+                  : "bg-transparent border-navy-600 text-text-muted hover:border-navy-500 hover:text-text-secondary"
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+              Filters
+              {hasActiveFilters(filters) && (
+                <span className="ml-0.5 h-4 w-4 rounded-full bg-gold-600/40 text-[9px] flex items-center justify-center text-gold-400 font-bold">
+                  {[...filters.types, ...filters.severities, ...filters.tickers, ...filters.sectors, ...filters.capTiers].length + (filters.etfOnly ? 1 : 0)}
+                </span>
+              )}
+            </button>
+
+            {/* Manage Rules */}
             {watchlistTickers.length > 0 && (
               <div className="relative">
                 <button
@@ -444,11 +670,7 @@ export default function AlertsFeed() {
 
                 {showTickerPicker && (
                   <>
-                    {/* click-away backdrop */}
-                    <div
-                      className="fixed inset-0 z-20"
-                      onClick={() => setShowTickerPicker(false)}
-                    />
+                    <div className="fixed inset-0 z-20" onClick={() => setShowTickerPicker(false)} />
                     <div
                       className="absolute right-0 top-full mt-1.5 z-30 rounded-xl py-1.5 min-w-[130px]"
                       style={{
@@ -461,10 +683,7 @@ export default function AlertsFeed() {
                       {watchlistTickers.map((t) => (
                         <button
                           key={t}
-                          onClick={() => {
-                            setSelectedTicker(t);
-                            setShowTickerPicker(false);
-                          }}
+                          onClick={() => { setSelectedTicker(t); setShowTickerPicker(false); }}
                           className="w-full text-left px-3 py-1.5 text-xs font-mono text-text-secondary hover:text-gold-400 hover:bg-navy-700/50 transition-colors"
                         >
                           {t}
@@ -492,72 +711,18 @@ export default function AlertsFeed() {
           </div>
         </div>
 
-        {/* Trigger-type filter chips */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
-                filter === f.key
-                  ? "bg-gold-600/20 border-gold-600/40 text-gold-400"
-                  : "bg-transparent border-navy-600 text-text-muted hover:border-navy-500 hover:text-text-secondary"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Watchlist ticker chips — always visible once loaded */}
-        {watchlistTickers.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker Names:</span>
-            <button
-              onClick={() => setTickerFilter("__all__")}
-              className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
-                tickerFilter === "__all__"
-                  ? "bg-navy-700 border-navy-500 text-text-secondary"
-                  : "bg-transparent border-navy-700 text-text-muted hover:border-navy-600 hover:text-text-secondary"
-              }`}
-            >
-              All
-            </button>
-            {watchlistTickers.map((t) => (
-              <button
-                key={t}
-                onClick={() => setTickerFilter(t)}
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium transition-colors border ${
-                  tickerFilter === t
-                    ? "bg-gold-600/20 border-gold-600/40 text-gold-400"
-                    : "bg-transparent border-navy-700 text-text-muted hover:border-navy-600 hover:text-text-secondary"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+        {/* Filter panel */}
+        {showFilters && (
+          <FilterPanel
+            options={filterOptions}
+            filters={filters}
+            onChange={setFilters}
+            onClear={() => setFilters(emptyFilters())}
+          />
         )}
 
-        {/* Classification chips — sector / cap tier / ETF */}
-        {classChips.length > 1 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">Ticker Types:</span>
-            {classChips.map((c) => (
-              <button
-                key={c.key}
-                onClick={() => setClassFilter(c.key)}
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
-                  classFilter === c.key
-                    ? "bg-navy-700 border-navy-500 text-text-secondary"
-                    : "bg-transparent border-navy-700 text-text-muted hover:border-navy-600 hover:text-text-secondary"
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Active filter chips */}
+        <ActiveChips filters={filters} onChange={setFilters} />
 
         {/* Feed */}
         {loading ? (

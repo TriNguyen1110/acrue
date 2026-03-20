@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import type { WsServerMessage } from "@/hooks/useWebSocket";
 import type { Alert } from "@/types/alerts";
 import type { SignalScore } from "@/types/signals";
 import type { WatchlistItem } from "@/types/watchlist";
@@ -306,6 +308,34 @@ export default function DashboardOverview() {
     }
     load();
   }, []);
+
+  // Live updates via WebSocket — patch watchlist prices + increment alert badge
+  useWebSocket(
+    useCallback((msg: WsServerMessage) => {
+      if (msg.type === "quote") {
+        setWatchlist((prev) =>
+          prev.map((item) =>
+            item.ticker === msg.ticker
+              ? { ...item, quote: { ...item.quote, price: msg.price, changePct: msg.changePct, volume: msg.volume } }
+              : item
+          )
+        );
+      } else if (msg.type === "alert") {
+        setUnreadCount((n) => n + 1);
+        const incoming: Alert = {
+          id:          msg.id,
+          ticker:      msg.ticker,
+          type:        msg.alertType as Alert["type"],
+          message:     msg.message,
+          severity:    msg.severity as Alert["severity"],
+          triggeredAt: msg.triggeredAt,
+          read:        false,
+          rules:       {},
+        };
+        setUnreadAlerts((prev) => [incoming, ...prev].slice(0, 4));
+      }
+    }, [])
+  );
 
   const watchlistCount = watchlist.length;
   const topSignalScore = signals[0]?.score ?? null;

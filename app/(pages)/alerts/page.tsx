@@ -1,4 +1,5 @@
 import AlertsFeed from "@/components/stateful/AlertsFeed";
+import PushNotificationToggle from "@/components/stateful/PushNotificationToggle";
 
 export default function AlertsPage() {
   return (
@@ -13,6 +14,9 @@ export default function AlertsPage() {
         <p className="text-text-secondary text-sm max-w-xl mx-auto">
           Automatic notifications when price moves, volatility, or volume thresholds are crossed on your watchlist tickers.
         </p>
+        <div className="mt-4 flex justify-center">
+          <PushNotificationToggle />
+        </div>
       </div>
 
       <AlertsFeed />

@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Button, Spinner, Skeleton } from "@heroui/react";
 import { AlertBadge, AlertTypeBadge } from "@/components/ui/AlertBadge";
 import AlertRulesPanel from "@/components/stateful/AlertRulesPanel";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import type { WsServerMessage } from "@/hooks/useWebSocket";
 import type { Alert, AlertType, AlertSeverity, PaginatedAlerts } from "@/types";
 import Link from "next/link";
 
@@ -135,7 +137,7 @@ function toggleSet<T>(prev: Set<T>, value: T): Set<T> {
   return next;
 }
 
-// ── LeetCode-style filter panel ───────────────────────────────────────────────
+// ── Filter bar ────────────────────────────────────────────────────────────────
 
 const ALERT_TYPES: { key: AlertType; label: string }[] = [
   { key: "price_change", label: "Price Change" },
@@ -152,43 +154,6 @@ const SEVERITIES: { key: AlertSeverity; label: string; color: string }[] = [
   { key: "low",    label: "Low",    color: "text-text-muted border-navy-600    bg-transparent"  },
 ];
 
-interface FilterGroupProps {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}
-
-function FilterGroup({ title, defaultOpen = true, children }: FilterGroupProps) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="border-b last:border-0" style={{ borderColor: "rgba(247,243,229,0.06)" }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-left group"
-      >
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted group-hover:text-text-secondary transition-colors">
-          {title}
-        </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="11"
-          height="11"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      {open && <div className="px-3 pb-3 flex flex-wrap gap-1.5">{children}</div>}
-    </div>
-  );
-}
-
 interface FilterChipProps {
   label: string;
   active: boolean;
@@ -200,7 +165,7 @@ function FilterChip({ label, active, onClick, colorClass }: FilterChipProps) {
   return (
     <button
       onClick={onClick}
-      className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
+      className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-all whitespace-nowrap ${
         active
           ? colorClass ?? "bg-gold-600/20 border-gold-600/40 text-gold-400"
           : "bg-transparent border-navy-700 text-text-muted hover:border-navy-500 hover:text-text-secondary"
@@ -219,6 +184,7 @@ interface FilterPanelProps {
 }
 
 function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) {
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const active = hasActiveFilters(filters);
 
   function toggle<K extends "types" | "severities" | "tickers" | "sectors" | "capTiers" | "topics">(
@@ -229,123 +195,103 @@ function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) 
     onChange({ ...filters, [key]: toggleSet(filters[key], value) });
   }
 
+  function toggleGroup(name: string) {
+    setOpenGroup((prev) => (prev === name ? null : name));
+  }
+
+  const sep = <span className="shrink-0 w-px h-4 bg-navy-600" />;
+
+  // Label button for each group
+  function GroupBtn({ name, activeCount }: { name: string; activeCount: number }) {
+    const isOpen   = openGroup === name;
+    const hasActive = activeCount > 0;
+    return (
+      <button
+        onClick={() => toggleGroup(name)}
+        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-widest border transition-all ${
+          hasActive
+            ? "text-gold-400 border-gold-600/30 bg-gold-600/10"
+            : isOpen
+              ? "text-text-secondary border-navy-500 bg-navy-700/60"
+              : "text-text-muted border-navy-700 hover:border-navy-500 hover:text-text-secondary"
+        }`}
+      >
+        {name}
+        {hasActive && (
+          <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-gold-600/30 text-[9px] font-bold text-gold-400 leading-none">
+            {activeCount}
+          </span>
+        )}
+        <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+    );
+  }
+
+  // Chips rendered below the label row for the open group
+  const chipRows: Record<string, React.ReactNode> = {
+    Type: ALERT_TYPES.map((t) => (
+      <FilterChip key={t.key} label={t.label} active={filters.types.has(t.key)} onClick={() => toggle("types", t.key)} />
+    )),
+    Severity: SEVERITIES.map((s) => (
+      <FilterChip key={s.key} label={s.label} active={filters.severities.has(s.key)} onClick={() => toggle("severities", s.key)} colorClass={s.color} />
+    )),
+    Ticker: options.tickers.map((t) => (
+      <FilterChip key={t} label={t} active={filters.tickers.has(t)} onClick={() => toggle("tickers", t)} colorClass="bg-gold-600/20 border-gold-600/40 text-gold-400 font-mono" />
+    )),
+    Sector: options.sectors.map((s) => (
+      <FilterChip key={s} label={s} active={filters.sectors.has(s)} onClick={() => toggle("sectors", s)} />
+    )),
+    Cap: options.capTiers.map((tier) => (
+      <FilterChip key={tier} label={tier} active={filters.capTiers.has(tier)} onClick={() => toggle("capTiers", tier)} />
+    )),
+    Topic: options.industries.map((ind) => (
+      <FilterChip key={ind} label={ind} active={filters.topics.has(ind)} onClick={() => toggle("topics", ind)} />
+    )),
+  };
+
   return (
     <div
-      className="rounded-2xl overflow-hidden mb-4"
+      className="rounded-xl mb-4 overflow-hidden"
       style={{ background: "rgba(10,22,40,0.8)", border: "1px solid rgba(247,243,229,0.08)" }}
     >
-      {/* Panel header */}
+      {/* Label row */}
       <div
-        className="flex items-center justify-between px-4 py-2.5 border-b"
-        style={{ borderColor: "rgba(247,243,229,0.08)" }}
+        className="px-3 py-2 flex items-center gap-2 flex-wrap"
+        style={openGroup ? { borderBottom: "1px solid rgba(247,243,229,0.06)" } : undefined}
       >
-        <div className="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">Filters</span>
-        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted shrink-0">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+
+        <GroupBtn name="Type"     activeCount={filters.types.size} />
+        {sep}
+        <GroupBtn name="Severity" activeCount={filters.severities.size} />
+        {options.tickers.length  > 0 && <>{sep}<GroupBtn name="Ticker" activeCount={filters.tickers.size} /></>}
+        {options.sectors.length  > 0 && <>{sep}<GroupBtn name="Sector" activeCount={filters.sectors.size} /></>}
+        {options.capTiers.length > 0 && <>{sep}<GroupBtn name="Cap"    activeCount={filters.capTiers.size} /></>}
+        {options.industries.length > 0 && <>{sep}<GroupBtn name="Topic" activeCount={filters.topics.size} /></>}
+        {options.hasEtf && (
+          <>{sep}<FilterChip label="ETF / ETP" active={filters.etfOnly} onClick={() => onChange({ ...filters, etfOnly: !filters.etfOnly })} /></>
+        )}
         {active && (
-          <button
-            onClick={onClear}
-            className="text-[10px] text-text-muted hover:text-gold-400 transition-colors"
-          >
-            Clear all
-          </button>
+          <>{sep}
+            <button onClick={onClear} className="text-[10px] text-text-muted hover:text-gold-400 transition-colors whitespace-nowrap">
+              Clear all
+            </button>
+          </>
         )}
       </div>
 
-      {/* Alert Type */}
-      <FilterGroup title="Alert Type">
-        {ALERT_TYPES.map((t) => (
-          <FilterChip
-            key={t.key}
-            label={t.label}
-            active={filters.types.has(t.key)}
-            onClick={() => toggle("types", t.key)}
-          />
-        ))}
-      </FilterGroup>
-
-      {/* Severity */}
-      <FilterGroup title="Severity">
-        {SEVERITIES.map((s) => (
-          <FilterChip
-            key={s.key}
-            label={s.label}
-            active={filters.severities.has(s.key)}
-            onClick={() => toggle("severities", s.key)}
-            colorClass={s.color}
-          />
-        ))}
-      </FilterGroup>
-
-      {/* Ticker */}
-      {options.tickers.length > 0 && (
-        <FilterGroup title="Ticker">
-          {options.tickers.map((t) => (
-            <FilterChip
-              key={t}
-              label={t}
-              active={filters.tickers.has(t)}
-              onClick={() => toggle("tickers", t)}
-              colorClass="bg-gold-600/20 border-gold-600/40 text-gold-400 font-mono"
-            />
-          ))}
-        </FilterGroup>
-      )}
-
-      {/* Sector */}
-      {options.sectors.length > 0 && (
-        <FilterGroup title="Sector" defaultOpen={false}>
-          {options.sectors.map((s) => (
-            <FilterChip
-              key={s}
-              label={s}
-              active={filters.sectors.has(s)}
-              onClick={() => toggle("sectors", s)}
-            />
-          ))}
-        </FilterGroup>
-      )}
-
-      {/* Cap Tier */}
-      {options.capTiers.length > 0 && (
-        <FilterGroup title="Market Cap" defaultOpen={false}>
-          {options.capTiers.map((tier) => (
-            <FilterChip
-              key={tier}
-              label={`Cap ${tier}`}
-              active={filters.capTiers.has(tier)}
-              onClick={() => toggle("capTiers", tier)}
-            />
-          ))}
-        </FilterGroup>
-      )}
-
-      {/* Topics (ticker industry categories) */}
-      {options.industries.length > 0 && (
-        <FilterGroup title="Topic" defaultOpen={false}>
-          {options.industries.map((ind) => (
-            <FilterChip
-              key={ind}
-              label={ind}
-              active={filters.topics.has(ind)}
-              onClick={() => toggle("topics", ind)}
-            />
-          ))}
-        </FilterGroup>
-      )}
-
-      {/* ETF */}
-      {options.hasEtf && (
-        <FilterGroup title="Asset Type" defaultOpen={false}>
-          <FilterChip
-            label="ETF / ETP"
-            active={filters.etfOnly}
-            onClick={() => onChange({ ...filters, etfOnly: !filters.etfOnly })}
-          />
-        </FilterGroup>
+      {/* Chips row — below labels, only for the open group */}
+      {openGroup && chipRows[openGroup] && (
+        <div className="px-3 py-2.5 flex flex-wrap gap-1.5">
+          {chipRows[openGroup]}
+        </div>
       )}
     </div>
   );
@@ -550,7 +496,6 @@ export default function AlertsFeed() {
 
   const [sort,    setSort]    = useState<SortKey>("newest");
   const [filters, setFilters] = useState<ActiveFilters>(emptyFilters);
-  const [showFilters, setShowFilters] = useState(true);
 
   const [filterOptions, setFilterOptions] = useState<AlertFilterOptions>({
     tickers: [], sectors: [], industries: [], capTiers: [], hasEtf: false,
@@ -630,6 +575,31 @@ export default function AlertsFeed() {
     } catch { /* silent */ }
   }
 
+  // Real-time alert stream — prepend new alerts to page 1 as they fire
+  useWebSocket(
+    useCallback((msg: WsServerMessage) => {
+      if (msg.type !== "alert") return;
+      // Only prepend on page 1 so the ordering stays coherent
+      if (page !== 1) return;
+      const incoming: Alert = {
+        id:          msg.id,
+        ticker:      msg.ticker,
+        type:        msg.alertType as AlertType,
+        message:     msg.message,
+        severity:    msg.severity as AlertSeverity,
+        triggeredAt: msg.triggeredAt,
+        read:        false,
+        rules:       {},
+      };
+      setAlerts((prev) => {
+        // Avoid duplicates in case the REST poll and WS race
+        if (prev.some((a) => a.id === incoming.id)) return prev;
+        return [incoming, ...prev];
+      });
+      setUnreadCount((n) => n + 1);
+    }, [page])
+  );
+
   const displayed = applyFiltersSort(alerts, filters, sort);
 
   return (
@@ -655,25 +625,6 @@ export default function AlertsFeed() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Toggle filter panel */}
-            <button
-              onClick={() => setShowFilters((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                showFilters
-                  ? "bg-gold-600/15 border-gold-600/35 text-gold-400"
-                  : "bg-transparent border-navy-600 text-text-muted hover:border-navy-500 hover:text-text-secondary"
-              }`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-              Filters
-              {hasActiveFilters(filters) && (
-                <span className="ml-0.5 h-4 w-4 rounded-full bg-gold-600/40 text-[9px] flex items-center justify-center text-gold-400 font-bold">
-                  {[...filters.types, ...filters.severities, ...filters.tickers, ...filters.sectors, ...filters.capTiers, ...filters.topics].length + (filters.etfOnly ? 1 : 0)}
-                </span>
-              )}
-            </button>
 
             {/* Manage Rules */}
             {watchlistTickers.length > 0 && (
@@ -736,18 +687,13 @@ export default function AlertsFeed() {
           </div>
         </div>
 
-        {/* Filter panel */}
-        {showFilters && (
-          <FilterPanel
-            options={filterOptions}
-            filters={filters}
-            onChange={setFilters}
-            onClear={() => setFilters(emptyFilters())}
-          />
-        )}
-
-        {/* Active filter chips */}
-        <ActiveChips filters={filters} onChange={setFilters} />
+        {/* Filter bar */}
+        <FilterPanel
+          options={filterOptions}
+          filters={filters}
+          onChange={setFilters}
+          onClear={() => setFilters(emptyFilters())}
+        />
 
         {/* Feed */}
         {loading ? (

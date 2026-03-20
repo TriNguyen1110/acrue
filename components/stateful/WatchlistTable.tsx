@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Input, Spinner, Skeleton } from "@heroui/react";
 import StockCard from "@/components/ui/StockCard";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import type { WsServerMessage } from "@/hooks/useWebSocket";
 import type { WatchlistItem, AssetSearchResult } from "@/types";
 
 // ── Data hooks ────────────────────────────────────────────────────────────────
@@ -27,7 +29,8 @@ function useWatchlist() {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 60_000); // refresh every 60s (quote TTL)
+    // Fallback poll every 60s in case WS is unavailable
+    const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -122,6 +125,20 @@ export default function WatchlistTable() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [sort, setSort] = useState<SortKey>("added");
   const searchRef = useRef<HTMLDivElement>(null);
+
+  // Live quote updates via WebSocket — patch prices in-place without a full reload
+  useWebSocket(
+    useCallback((msg: WsServerMessage) => {
+      if (msg.type !== "quote") return;
+      setItems((prev) =>
+        prev.map((item) =>
+          item.ticker === msg.ticker
+            ? { ...item, quote: { ...item.quote, price: msg.price, changePct: msg.changePct, volume: msg.volume } }
+            : item
+        )
+      );
+    }, [setItems])
+  );
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {

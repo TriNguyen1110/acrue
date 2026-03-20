@@ -83,7 +83,7 @@ export default function Sidebar() {
           Acrue
         </span>
         <p className="text-xs tracking-[0.2em] uppercase mt-1.5" style={{ color: "rgba(247,243,229,0.35)" }}>
-          Invest with clarity
+          Accrue your edge
         </p>
       </div>
 

@@ -26,7 +26,9 @@ export const authConfig: NextAuthConfig = {
       const isAuthPage =
         nextUrl.pathname.startsWith("/login") ||
         nextUrl.pathname.startsWith("/register");
+      const isLandingPage = nextUrl.pathname === "/";
 
+      if (isLandingPage) return true; // always allow landing page
       if (!isLoggedIn && !isAuthPage) return false;
       if (isLoggedIn && isAuthPage) {
         return Response.redirect(new URL("/dashboard", nextUrl));

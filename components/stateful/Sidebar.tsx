@@ -69,6 +69,13 @@ export default function Sidebar() {
     >
       {/* Brand */}
       <div className="px-6 py-8 border-b text-center" style={{ borderColor: "rgba(247,243,229,0.1)" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/Vector File-05.svg"
+          alt="Acrue logo"
+          className="mx-auto"
+          style={{ width: 96, height: 48, objectFit: "contain", filter: "drop-shadow(0 0 8px rgba(247,243,229,0.25))" }}
+        />
         <span
           className="font-display text-3xl text-gold-400 block"
           style={{ textShadow: "0 0 20px rgba(247,243,229,0.3)" }}

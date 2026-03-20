@@ -54,10 +54,36 @@ export function startNotificationSystem(): void {
   // Alert detection — runs after every quote refresh (≤55×/min, driven by tickerScheduler).
   // Quote data is already cached by the time detection reads it; candle/daily data
   // is longer-TTL cached so no extra API calls are added per detection run.
+  // Newly created alerts are broadcast to connected WS clients immediately.
   tickerScheduler.addAfterFetchListener((ticker) => {
-    runAlertDetectionForTicker(ticker).catch((e) => {
-      console.error(`[notifications] alert detection failed for ${ticker}:`, e);
-    });
+    runAlertDetectionForTicker(ticker)
+      .then((created) => {
+        if (created.length === 0) return;
+        // Lazy import avoids a circular dependency at module load time
+        import("./ws").then(({ wsService }) => {
+          for (const alert of created) {
+            wsService.broadcastAlert(alert);
+          }
+        }).catch(() => {});
+
+        // Push notification for high-severity alerts — fires even when the tab is closed
+        const highAlerts = created.filter((a) => a.severity === "high");
+        if (highAlerts.length > 0) {
+          import("./push").then(({ sendPushToUser }) => {
+            for (const alert of highAlerts) {
+              sendPushToUser(alert.userId, {
+                title: `⚠ ${alert.ticker} — High Alert`,
+                body:  alert.message,
+                url:   "/alerts",
+                tag:   `alert-${alert.ticker}-${alert.alertType}`,
+              }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      })
+      .catch((e) => {
+        console.error(`[notifications] alert detection failed for ${ticker}:`, e);
+      });
   });
   console.log("[notifications] alert detection wired to tickerScheduler (≤55×/min)");
 

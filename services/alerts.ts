@@ -357,12 +357,22 @@ export async function detectAlertsForTicker(
  * Quote data is already cached from the scheduler's fetch; candles and daily
  * data are longer-TTL cached so they add negligible extra API calls.
  */
-export async function runAlertDetectionForTicker(ticker: string): Promise<void> {
+export interface CreatedAlert {
+  userId: string;
+  id: string;
+  ticker: string;
+  alertType: string;
+  message: string;
+  severity: string;
+  triggeredAt: string;
+}
+
+export async function runAlertDetectionForTicker(ticker: string): Promise<CreatedAlert[]> {
   const watchers = await prisma.watchlist.findMany({
     where:  { ticker },
     select: { userId: true },
   });
-  if (watchers.length === 0) return;
+  if (watchers.length === 0) return [];
 
   const userIds = [...new Set(watchers.map((w) => w.userId))];
 
@@ -397,11 +407,13 @@ export async function runAlertDetectionForTicker(ticker: string): Promise<void> 
     detected = await detectAlertsForTicker(ticker, combinedRules);
   } catch (e) {
     console.error(`[alerts] detection failed for ${ticker}:`, e);
-    return;
+    return [];
   }
-  if (detected.length === 0) return;
+  if (detected.length === 0) return [];
 
+  const created: CreatedAlert[] = [];
   const now = new Date();
+
   for (const userId of userIds) {
     for (const alert of detected) {
       const rule = userRuleMap.get(userId)?.get(alert.type) ?? DEFAULTS[alert.type];
@@ -413,7 +425,7 @@ export async function runAlertDetectionForTicker(ticker: string): Promise<void> 
       });
       if (recent) continue;
 
-      await prisma.alert.create({
+      const row = await prisma.alert.create({
         data: {
           userId,
           ticker:    alert.ticker,
@@ -423,8 +435,20 @@ export async function runAlertDetectionForTicker(ticker: string): Promise<void> 
           rules:     alert.rules as object,
         },
       });
+
+      created.push({
+        userId,
+        id:          row.id,
+        ticker:      row.ticker,
+        alertType:   row.type,
+        message:     row.message,
+        severity:    row.severity,
+        triggeredAt: row.triggeredAt.toISOString(),
+      });
     }
   }
+
+  return created;
 }
 
 /**

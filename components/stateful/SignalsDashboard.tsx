@@ -66,6 +66,8 @@ export default function SignalsDashboard() {
     ? Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length)
     : null;
 
+  const [showMethodology, setShowMethodology] = useState(false);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -159,14 +161,97 @@ export default function SignalsDashboard() {
         </div>
       )}
 
-      {/* ── Methodology footnote ── */}
-      <div className="text-[11px] text-text-muted leading-relaxed border-t border-navy-700 pt-4">
-        <span className="text-text-secondary font-medium">Methodology: </span>
-        Composite score = Price Momentum (35%) + Analyst Consensus (25%) + Valuation (20%) + News Sentiment (20%).
-        30-day projection uses 52-week range as annual volatility proxy, ±1.645σ for 90% CI.
-        Sharpe = (annualised expected return − 5% risk-free) / annual vol.
-        PEG = P/E ÷ analyst price-target implied growth rate.
-        Scores refresh every 5 minutes.
+      {/* ── Methodology explainer ── */}
+      <div className="border-t border-navy-700 pt-4">
+        <button
+          onClick={() => setShowMethodology((v) => !v)}
+          className="flex items-center gap-2 text-xs text-text-muted hover:text-gold-400 transition-colors"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            className={`transition-transform ${showMethodology ? "rotate-180" : ""}`}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          {showMethodology ? "Hide methodology" : "How are signals calculated?"}
+        </button>
+
+        {showMethodology && (
+          <div className="mt-4 space-y-4">
+            {/* Score scale */}
+            <div className="bg-navy-800 border border-navy-600 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-semibold text-text-primary uppercase tracking-wider">Score scale (0–100)</p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-2 rounded-full" style={{ background: "linear-gradient(to right, #f87171, #fbbf24, #34d399)" }} />
+              </div>
+              <div className="flex justify-between text-[11px] text-text-muted">
+                <span>0 — strongly bearish</span>
+                <span>50 — neutral</span>
+                <span>100 — strongly bullish</span>
+              </div>
+              <p className="text-[11px] text-text-muted pt-1">
+                Scores above 50 are bullish (green), below 50 are bearish (red). Confidence reflects how many data sources contributed — high confidence means all four components had fresh data.
+              </p>
+            </div>
+
+            {/* Four components */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                {
+                  label: "Price Momentum",
+                  weight: "35%",
+                  color: "#34d399",
+                  desc: "Measures how strongly the stock is trending. Combines today's % price change and where the current price sits within its 52-week range. A stock near its 52-week high with a positive day scores highest.",
+                },
+                {
+                  label: "Analyst Consensus",
+                  weight: "25%",
+                  color: "#60a5fa",
+                  desc: "Aggregates Wall Street sell-side ratings (Buy / Hold / Sell) and the % upside to the mean analyst price target. High consensus + large upside = strong bullish signal.",
+                },
+                {
+                  label: "Valuation",
+                  weight: "20%",
+                  color: "#f59e0b",
+                  desc: "Compares P/E ratio to sector norms and estimates PEG (Price/Earnings-to-Growth) using the analyst price target as an implied growth rate. Lower P/E + reasonable PEG scores higher.",
+                },
+                {
+                  label: "News Sentiment",
+                  weight: "20%",
+                  color: "#a78bfa",
+                  desc: "Scores the tone of news articles from the past 7 days using AFINN sentiment analysis. High-impact articles (strong positive or negative language) are weighted 2× vs. neutral ones.",
+                },
+              ].map(({ label, weight, color, desc }) => (
+                <div key={label} className="bg-navy-800 border border-navy-600 rounded-xl p-4 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-text-primary">{label}</span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border"
+                      style={{ color, borderColor: `${color}40`, background: `${color}10` }}>
+                      {weight}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-text-muted leading-relaxed">{desc}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Projection + Sharpe */}
+            <div className="bg-navy-800 border border-navy-600 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-semibold text-text-primary uppercase tracking-wider">30-day projection & Sharpe ratio</p>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                The price range shown on each card is a <strong className="text-text-secondary">90% confidence interval</strong> — there&apos;s a 90% chance the price lands within that band based on recent volatility.
+                Volatility is estimated from the 52-week high/low range (σ ≈ range / 3.92 / price).
+              </p>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                The <strong className="text-text-secondary">Sharpe ratio</strong> measures risk-adjusted return: how much expected return you get per unit of volatility, above a 5% risk-free rate baseline.
+                Above 1.0 is generally considered good; above 2.0 is excellent.
+              </p>
+            </div>
+
+            <p className="text-[11px] text-text-muted">Scores refresh every 5 minutes. Not financial advice.</p>
+          </div>
+        )}
       </div>
     </div>
   );

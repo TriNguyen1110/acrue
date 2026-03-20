@@ -342,10 +342,55 @@ POST /api/simulate
 
 ## Real-time — WebSocket
 
+Single endpoint: `WS /ws`
+
+**Server → client messages:**
+```json
+{ "type": "quote",  "ticker": "AAPL", "price": 214.32, "changePct": 1.4, "volume": 58200000 }
+{ "type": "alert",  "id": "uuid", "ticker": "AAPL", "alertType": "price_change", "message": "...", "severity": "high", "triggeredAt": "..." }
+{ "type": "subscribed", "tickers": ["AAPL", "NVDA"] }
+{ "type": "error",  "message": "Unauthorized" }
+{ "type": "pong" }
 ```
-WS /ws/alerts      — push new alerts to connected clients instantly
-WS /ws/quotes      — live price ticks for watchlist assets
+
+**Client → server messages:**
+```json
+{ "type": "ping" }
+{ "type": "subscribe",   "ticker": "TSLA" }
+{ "type": "unsubscribe", "ticker": "TSLA" }
 ```
+
+**Authentication:** session cookie (`next-auth.session-token`) read from the WS upgrade request, decoded directly via `@auth/core/jwt` — no extra round-trip.
+
+**Quote broadcasts:** driven by `tickerScheduler.afterFetchListener` — up to 55×/min per ticker.
+
+**Alert broadcasts:** fired from `notifications.ts` after each alert detection cycle; high-severity alerts also trigger a browser push notification.
+
+---
+
+## Push Notifications — `/api/v1/notifications/push`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/notifications/push/subscribe` | Save push subscription (endpoint, p256dh, auth) |
+| `DELETE` | `/api/v1/notifications/push/subscribe` | Remove subscription by endpoint |
+| `POST` | `/api/v1/notifications/push/test` | Send a test push to the current user |
+
+**Subscribe request:**
+```json
+POST /api/v1/notifications/push/subscribe
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "keys": { "p256dh": "...", "auth": "..." }
+}
+```
+
+**Test response:**
+```json
+{ "sent": true, "attempted": 1, "succeeded": 1, "errors": [] }
+```
+
+High-severity alerts only. Service worker at `/sw.js` handles `push` events and shows OS-level browser notifications via `showNotification()`.
 
 ---
 
@@ -375,7 +420,8 @@ WS /ws/quotes      — live price ticks for watchlist assets
 | Sentiment analysis | `sentiment` (AFINN) |
 | RSS feed parsing | `rss-parser` — parses XML from Reuters, CNBC, MarketWatch, Yahoo Finance, Seeking Alpha |
 | Scheduling | `node-cron` |
-| WebSocket | `ws` or Next.js with `socket.io` |
+| WebSocket | `ws` (`noServer: true` + custom `server.ts`, only handles `/ws` path) |
+| Push notifications | `web-push` (VAPID) + service worker (`public/sw.js`) |
 | Caching | `ioredis` |
 
 ---

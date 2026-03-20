@@ -125,6 +125,20 @@ CREATE TABLE simulations (
 
 ---
 
+### `push_subscriptions`
+```sql
+CREATE TABLE push_subscriptions (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint   TEXT UNIQUE NOT NULL,    -- push service URL (FCM, Mozilla, etc.)
+  p256dh     TEXT NOT NULL,           -- client public key
+  auth       TEXT NOT NULL,           -- client auth secret
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
 ## Indexes
 
 ```sql
@@ -161,11 +175,13 @@ CREATE INDEX idx_simulations_user ON simulations(user_id, created_at DESC);
 |---------|--------|
 | Auth | `users` |
 | Watchlist | `watchlist` |
-| Notification System | `alerts` |
-| News System | `news_articles` |
+| Notification System | `alerts`, `alert_rules` |
+| Push Notifications | `push_subscriptions` |
+| News System | `news_articles`, `user_news_reads` |
 | Signals System | `signal_scores` |
 | Market Data | — (writes to Cache only) |
-| Portfolio | `portfolio_holdings`, `portfolio_snapshots`, `simulations` |
+| Portfolio | `portfolio_holdings`, `portfolio_snapshots` |
+| Paper Trading | `simulated_portfolios`, `simulated_holdings` |
 
 ---
 

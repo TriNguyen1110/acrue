@@ -26,7 +26,8 @@
 - **Stats/Math:** `simple-statistics`, `ml-matrix`
 - **NLP:** `sentiment` (AFINN)
 - **Scheduler:** `node-cron` (daily alert retention only — news + alert detection driven by tickerScheduler)
-- **WebSocket:** `ws`
+- **WebSocket:** `ws` (`noServer: true` + custom `server.ts` — only handles `/ws`, lets Next.js HMR pass through)
+- **Push Notifications:** `web-push` (VAPID) + `/public/sw.js` service worker — opt-in, high-severity alerts only
 
 ---
 
@@ -148,7 +149,7 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 5 | Signals scoring logic | Signals routes + page | `[x]` |
 | 6 | Portfolio metrics + MPT optimization | Portfolio routes + page | `[x]` |
 | 7 | Paper trading portfolios (simulate service + routes + UI) | Alerts topic filter (industry) + filter options endpoint + Dashboard overview page | `[x]` |
-| 8 | WebSocket server | Wire quotes + alerts into pages | `[ ]` |
+| 8 | WebSocket server | Wire quotes + alerts into pages | `[x]` |
 | 9 | Deploy + env config | Smoke test + fix issues | `[ ]` |
 | 10 | Bug fixes + polish | README + architecture diagram | `[ ]` |
 | 11 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
@@ -252,6 +253,11 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-17 | Alerts topic filter uses ticker's industry categories (not macro news topics) | Industry tags (Software, Biotechnology, etc.) are the natural categories for a stock; macro news topics require a join through news articles which adds latency and is less precise |
 | 2026-03-17 | Alert filter options query combines alert tickers + watchlist tickers | Alert tickers alone miss industries of tickers that haven't fired alerts yet; including watchlist gives users full industry coverage from the moment they add tickers |
 | 2026-03-17 | Dashboard fetches 4 endpoints in parallel with `Promise.allSettled` | Partial failures (e.g. signals slow) must not blank the whole dashboard; allSettled lets each quadrant render independently with its own data |
+| 2026-03-19 | WebSocket uses `noServer: true` + manual upgrade routing | Default `{ server }` mode intercepts all upgrades including `/_next/webpack-hmr`, breaking HMR; `noServer` lets us route only `/ws` and pass everything else to Next.js |
+| 2026-03-19 | WS auth decodes next-auth JWT directly from upgrade request cookies | No extra HTTP round-trip needed; session token is present in cookies on every WS upgrade; `decode()` from `@auth/core/jwt` handles it with `AUTH_SECRET` + cookie name as salt |
+| 2026-03-19 | `runAlertDetectionForTicker` returns created alerts instead of void | Broadcast (WS + push) needs the full alert row; returning from creation avoids a second DB query in notifications.ts |
+| 2026-03-19 | Lazy `import()` for ws/push in notifications.ts | Direct imports create circular deps (notifications → ws → notifications); dynamic import() inside the afterFetchListener callback resolves at call time |
+| 2026-03-19 | Web Push (VAPID) for high-severity alert browser notifications | Zero cost, works tab-closed via service worker; `VAPID_MAILTO` must be `mailto:email` with no spaces or angle brackets |
 
 ---
 

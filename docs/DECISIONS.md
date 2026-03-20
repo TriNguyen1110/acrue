@@ -478,6 +478,68 @@ Daily log returns from Yahoo Finance (unofficial raw API, 24h Redis cache). Fall
 
 ---
 
+## 2026-03-19 — WebSocket server uses `noServer: true` to avoid intercepting Next.js HMR
+
+**Decision:** The `ws` WebSocket server is initialised with `{ noServer: true }` and a manual `server.on("upgrade")` handler that only routes `/ws` upgrade requests. All other paths (including `/_next/webpack-hmr`) pass through to Next.js's handler untouched.
+
+**Why:**
+The default `new WebSocketServer({ server })` approach intercepts every HTTP upgrade event on the shared server. This prevents Next.js from handling its own `/_next/webpack-hmr` WebSocket, which breaks Hot Module Replacement during development. The `noServer` pattern gives full control over which paths are handled.
+
+**Tradeoffs:**
+- Requires a custom `server.ts` entry point instead of the standard `next dev` / `next start` commands. `package.json` `dev` and `start` scripts now run `tsx server.ts`.
+- Any future WebSocket path (e.g. `/ws/v2`) must be added to the upgrade handler manually.
+
+---
+
+## 2026-03-19 — WS authentication decodes next-auth JWT directly from the upgrade request
+
+**Decision:** `WsService.authenticateRequest()` reads the `next-auth.session-token` (or `__Secure-next-auth.session-token` on HTTPS) cookie from the HTTP upgrade request headers and decodes the JWT using `decode()` from `@auth/core/jwt` with `AUTH_SECRET` + the cookie name as salt.
+
+**Why:**
+WebSocket upgrade requests carry cookies from the browser automatically, so the session token is available without any extra round-trip. Calling the Next.js session API from inside a WS upgrade handler would require an internal HTTP call, adding latency and a circular dependency. Direct JWT decode is the standard pattern for next-auth v5 server-side validation outside of API routes.
+
+**Tradeoffs:**
+- The salt parameter (`cookieName`) must match exactly what next-auth used when issuing the token — verified by using the same cookie name as the salt.
+- On HTTPS, next-auth uses the `__Secure-` prefixed cookie name; code checks for both.
+
+---
+
+## 2026-03-19 — Alert detection returns created alerts for downstream broadcasting
+
+**Decision:** `runAlertDetectionForTicker()` was changed from `Promise<void>` to `Promise<CreatedAlert[]>` — it now captures the `prisma.alert.create()` result for each fired alert and returns the full array.
+
+**Why:**
+Broadcasting a WS alert or push notification requires the alert's `id`, `ticker`, `alertType`, `message`, `severity`, and `userId`. Previously the function discarded the created row. Returning it avoids a second DB query in `notifications.ts` and keeps the broadcast logic co-located with the detection trigger.
+
+**Tradeoffs:**
+- `notifications.ts` must import from `./ws` and `./push` — both of which import from `services/`. To avoid circular dependency errors at module load time, these imports use dynamic `import()` inside the afterFetchListener callback.
+
+---
+
+## 2026-03-19 — Web Push (VAPID) for browser push notifications
+
+**Decision:** High-severity alert notifications are delivered via the Web Push protocol using the `web-push` npm library and VAPID authentication keys. Users opt in via a `PushNotificationToggle` component on the Alerts page.
+
+**Flow:**
+1. User clicks "Enable push alerts" → browser registers `/sw.js` service worker → `Notification.requestPermission()` → `PushManager.subscribe({ applicationServerKey: VAPID_PUBLIC_KEY })`
+2. Subscription object (endpoint, p256dh, auth) POSTed to `/api/v1/notifications/push/subscribe` and stored in `PushSubscription` table
+3. When a high-severity alert fires, `sendPushToUser()` sends to all stored endpoints via `webpush.sendNotification()`
+4. Browser receives push → service worker `push` event → `showNotification()` → OS-level banner
+
+**Why browser push over email/SMS:**
+- Zero cost, zero infrastructure beyond the VAPID key pair
+- Works even with the tab closed (service worker handles delivery)
+- Native OS notification appearance (same as email/calendar alerts)
+- Subscription auto-cleanup: 410/404 responses from the push service trigger automatic `PushSubscription` delete
+
+**VAPID_MAILTO format:** must be `mailto:you@example.com` — no spaces, no angle brackets. The `web-push` library embeds this in the VAPID JWT sent to the push service as a contact field.
+
+**Tradeoffs:**
+- Push is opt-in — users must grant browser notification permission. macOS users additionally need to set Chrome's alert style to "Persistent" in System Settings → Notifications to see banners rather than silent notification-center entries.
+- High-severity only — low/medium alerts are WebSocket-only (in-app). Reduces notification fatigue.
+
+---
+
 ## 2026-03-13 — Prisma ORM instead of raw `pg`
 
 **Decision:** Use Prisma for DB access instead of raw SQL with `pg`.

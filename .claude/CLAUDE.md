@@ -150,8 +150,8 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 6 | Portfolio metrics + MPT optimization | Portfolio routes + page | `[x]` |
 | 7 | Paper trading portfolios (simulate service + routes + UI) | Alerts topic filter (industry) + filter options endpoint + Dashboard overview page | `[x]` |
 | 8 | WebSocket server | Wire quotes + alerts into pages | `[x]` |
-| 9 | Deploy + env config | Smoke test + fix issues | `[ ]` |
-| 10 | Bug fixes + polish | README + architecture diagram | `[ ]` |
+| 9 | Deploy + env config | Smoke test + fix issues | `[x]` |
+| 10 | Bug fixes + polish | README + architecture diagram | `[x]` |
 | 11 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
 | 12 | End-to-end walkthrough + fix remaining bugs | Final UI polish + mobile responsiveness | `[ ]` |
 | 13 | Demo video / screenshots | Final README + live deploy check | `[ ]` |
@@ -258,6 +258,12 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 | 2026-03-19 | `runAlertDetectionForTicker` returns created alerts instead of void | Broadcast (WS + push) needs the full alert row; returning from creation avoids a second DB query in notifications.ts |
 | 2026-03-19 | Lazy `import()` for ws/push in notifications.ts | Direct imports create circular deps (notifications → ws → notifications); dynamic import() inside the afterFetchListener callback resolves at call time |
 | 2026-03-19 | Web Push (VAPID) for high-severity alert browser notifications | Zero cost, works tab-closed via service worker; `VAPID_MAILTO` must be `mailto:email` with no spaces or angle brackets |
+| 2026-03-21 | Deployed on Vercel (serverless); WebSocket falls back to 60s polling | Custom `server.ts` WebSocket server requires persistent Node process; Vercel serverless doesn't support it. Components already have polling fallback — app fully functional either way |
+| 2026-03-21 | `tsx` moved from devDependencies to dependencies | Railway/Render production deploys run `npm ci --production` which skips devDependencies; `tsx` is needed at runtime for `server.ts` |
+| 2026-03-21 | `postinstall` script runs `prisma generate` | Ensures Prisma client is generated after `npm install` on any deploy platform before `next build` runs |
+| 2026-03-21 | Landing page added at `/` with public middleware bypass | `auth.config.ts` `authorized` callback blocked unauthenticated access to all routes; added `isLandingPage` check to allow `/` through without redirect |
+| 2026-03-21 | `GroupBtn` moved outside `FilterPanel` render scope | Defining components inside render recreates them on every render, resetting state; moved outside and passed `openGroup`/`onToggle` as props |
+| 2026-03-21 | `useWebSocket` ref updates moved to `useLayoutEffect` | Updating refs during render (`onMessageRef.current = ...`) violates React rules; `useLayoutEffect` runs synchronously after DOM mutations but before paint — correct place for ref sync |
 
 ---
 

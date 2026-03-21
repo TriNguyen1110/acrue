@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 
 // ── Message types sent from server → client ───────────────────────────────────
 
@@ -52,8 +52,10 @@ export function useWebSocket(onMessage: (msg: WsServerMessage) => void): void {
   const wsRef              = useRef<WebSocket | null>(null);
   const reconnectTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
-  const onMessageRef       = useRef(onMessage);
-  onMessageRef.current     = onMessage;
+  const onMessageRef = useRef(onMessage);
+  const connectRef   = useRef<() => void>(() => {});
+
+  useLayoutEffect(() => { onMessageRef.current = onMessage; });
 
   const connect = useCallback(() => {
     // Don't open a second connection if one is already alive
@@ -89,12 +91,14 @@ export function useWebSocket(onMessage: (msg: WsServerMessage) => void): void {
       }
       wsRef.current = null;
       // Reconnect after 3s
-      reconnectTimerRef.current = setTimeout(() => connect(), 3_000);
+      reconnectTimerRef.current = setTimeout(() => connectRef.current(), 3_000);
     };
 
     ws.onclose = cleanup;
     ws.onerror = () => ws.close();
   }, []);
+
+  useLayoutEffect(() => { connectRef.current = connect; });
 
   useEffect(() => {
     connect();

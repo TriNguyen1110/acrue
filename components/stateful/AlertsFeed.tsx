@@ -183,14 +183,48 @@ interface FilterPanelProps {
   onClear:  () => void;
 }
 
+function GroupBtn({ name, activeCount, openGroup, onToggle }: {
+  name: string;
+  activeCount: number;
+  openGroup: string | null;
+  onToggle: (name: string) => void;
+}) {
+  const isOpen    = openGroup === name;
+  const hasActive = activeCount > 0;
+  return (
+    <button
+      onClick={() => onToggle(name)}
+      className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-widest border transition-all ${
+        hasActive
+          ? "text-gold-400 border-gold-600/30 bg-gold-600/10"
+          : isOpen
+            ? "text-text-secondary border-navy-500 bg-navy-700/60"
+            : "text-text-muted border-navy-700 hover:border-navy-500 hover:text-text-secondary"
+      }`}
+    >
+      {name}
+      {hasActive && (
+        <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-gold-600/30 text-[9px] font-bold text-gold-400 leading-none">
+          {activeCount}
+        </span>
+      )}
+      <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+        className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
+      >
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+    </button>
+  );
+}
+
 function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const active = hasActiveFilters(filters);
 
   function toggle<K extends "types" | "severities" | "tickers" | "sectors" | "capTiers" | "topics">(
     key: K,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    value: any
+      value: unknown
   ) {
     onChange({ ...filters, [key]: toggleSet(filters[key], value) });
   }
@@ -200,37 +234,6 @@ function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) 
   }
 
   const sep = <span className="shrink-0 w-px h-4 bg-navy-600" />;
-
-  // Label button for each group
-  function GroupBtn({ name, activeCount }: { name: string; activeCount: number }) {
-    const isOpen   = openGroup === name;
-    const hasActive = activeCount > 0;
-    return (
-      <button
-        onClick={() => toggleGroup(name)}
-        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-widest border transition-all ${
-          hasActive
-            ? "text-gold-400 border-gold-600/30 bg-gold-600/10"
-            : isOpen
-              ? "text-text-secondary border-navy-500 bg-navy-700/60"
-              : "text-text-muted border-navy-700 hover:border-navy-500 hover:text-text-secondary"
-        }`}
-      >
-        {name}
-        {hasActive && (
-          <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-gold-600/30 text-[9px] font-bold text-gold-400 leading-none">
-            {activeCount}
-          </span>
-        )}
-        <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-    );
-  }
 
   // Chips rendered below the label row for the open group
   const chipRows: Record<string, React.ReactNode> = {
@@ -268,13 +271,13 @@ function FilterPanel({ options, filters, onChange, onClear }: FilterPanelProps) 
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
 
-        <GroupBtn name="Type"     activeCount={filters.types.size} />
+        <GroupBtn name="Type"     activeCount={filters.types.size}      openGroup={openGroup} onToggle={toggleGroup} />
         {sep}
-        <GroupBtn name="Severity" activeCount={filters.severities.size} />
-        {options.tickers.length  > 0 && <>{sep}<GroupBtn name="Ticker" activeCount={filters.tickers.size} /></>}
-        {options.sectors.length  > 0 && <>{sep}<GroupBtn name="Sector" activeCount={filters.sectors.size} /></>}
-        {options.capTiers.length > 0 && <>{sep}<GroupBtn name="Cap"    activeCount={filters.capTiers.size} /></>}
-        {options.industries.length > 0 && <>{sep}<GroupBtn name="Topic" activeCount={filters.topics.size} /></>}
+        <GroupBtn name="Severity" activeCount={filters.severities.size}  openGroup={openGroup} onToggle={toggleGroup} />
+        {options.tickers.length  > 0 && <>{sep}<GroupBtn name="Ticker" activeCount={filters.tickers.size}  openGroup={openGroup} onToggle={toggleGroup} /></>}
+        {options.sectors.length  > 0 && <>{sep}<GroupBtn name="Sector" activeCount={filters.sectors.size}  openGroup={openGroup} onToggle={toggleGroup} /></>}
+        {options.capTiers.length > 0 && <>{sep}<GroupBtn name="Cap"    activeCount={filters.capTiers.size} openGroup={openGroup} onToggle={toggleGroup} /></>}
+        {options.industries.length > 0 && <>{sep}<GroupBtn name="Topic" activeCount={filters.topics.size}  openGroup={openGroup} onToggle={toggleGroup} /></>}
         {options.hasEtf && (
           <>{sep}<FilterChip label="ETF / ETP" active={filters.etfOnly} onClick={() => onChange({ ...filters, etfOnly: !filters.etfOnly })} /></>
         )}

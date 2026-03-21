@@ -41,8 +41,8 @@ function useTickerSearch(query: string) {
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
-    if (query.trim().length < 1) { setResults([]); return; }
     timer.current = setTimeout(async () => {
+      if (query.trim().length < 1) { setResults([]); return; }
       try {
         const res = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}&limit=6`);
         if (!res.ok) return;

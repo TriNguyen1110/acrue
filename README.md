@@ -37,31 +37,45 @@ A full-stack stock market intelligence platform built with Next.js, TypeScript, 
 ## Architecture
 
 ```
-Frontend (Next.js App Router)
-  └── app/(pages)/*         — page layouts, no logic
-  └── components/stateful/  — data-fetching components
-  └── components/ui/        — stateless presentational components
-  └── hooks/                — custom React hooks (useWebSocket)
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Browser (Next.js)                            │
+│  pages/  ·  stateful components  ·  ui components  ·  useWebSocket │
+└────────────────────┬──────────────────────┬────────────────────────┘
+          REST /api/v1/*               WS /ws
+┌────────────────────▼──────────────────────▼────────────────────────┐
+│                    Node.js Server (server.ts)                       │
+│                                                                     │
+│  API Routes (app/api/v1/*)          WebSocket (services/ws.ts)      │
+│    auth · watchlist · alerts          live quote ticks              │
+│    news · signals · portfolio         alert broadcasts              │
+│    simulate · push                                                  │
+│                                                                     │
+│  Services                                                           │
+│    tickerScheduler  ──► rateLimiter ──► Finnhub REST API            │
+│    notifications    ──► ws.ts (broadcast) + push.ts (VAPID)         │
+│    alerts           ──► anomaly detection (quote-based)             │
+│    news             ──► NLP pipeline (AFINN sentiment)              │
+│    signals          ──► composite scoring (4 components)            │
+│    portfolio        ──► MPT optimization (gradient ascent)          │
+│    simulate         ──► paper trading (live P&L)                    │
+│                                                                     │
+│  Infrastructure (lib/)                                              │
+│    finnhub/  ·  rateLimiter  ·  db (Prisma)  ·  cache (Redis)       │
+└──────────┬─────────────────────────────┬───────────────────────────┘
+           │ PostgreSQL (Neon)            │ Redis (Upstash)
+┌──────────▼──────────┐       ┌──────────▼──────────┐
+│  PostgreSQL          │       │  Redis               │
+│  users · watchlist  │       │  quote cache (60s)   │
+│  alerts · news      │       │  profile cache (6h)  │
+│  signals · portfolio│       │  rate limiter state  │
+│  pushSubscriptions  │       └─────────────────────┘
+└─────────────────────┘
 
-API Layer
-  └── app/api/v1/*          — thin route handlers, auth guard, delegate to services
-
-Services (business logic)
-  └── services/alerts.ts          — anomaly detection, rule evaluation
-  └── services/notifications.ts   — alert lifecycle + WS/push dispatch
-  └── services/tickerScheduler.ts — two-timer rate-limited quote fetcher (≤55 req/min)
-  └── services/signals.ts         — composite signal scoring
-  └── services/news.ts            — NLP pipeline + RSS ingestion
-  └── services/portfolio.ts       — MPT optimization
-  └── services/simulate.ts        — paper trading portfolios
-  └── services/ws.ts              — WebSocket server
-  └── services/push.ts            — Web Push delivery
-
-Infrastructure (lib/)
-  └── lib/finnhub/   — Finnhub data access layer (quote, chart, search, summary, screener)
-  └── lib/cache.ts   — Redis client
-  └── lib/db.ts      — Prisma client
-  └── lib/rateLimiter.ts — token bucket rate limiter with scored priority queue
+External APIs
+  Finnhub REST  — live quotes, company profiles, news, screener
+  RSS feeds     — Reuters, CNBC, MarketWatch (4× daily)
+  Google OAuth  — authentication
+  Web Push      — VAPID push notification delivery
 ```
 
 ---

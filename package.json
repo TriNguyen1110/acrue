@@ -6,6 +6,7 @@
     "dev": "tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
+    "postinstall": "prisma generate",
     "lint": "eslint",
     "seed": "npx tsx prisma/seed.ts"
   },
@@ -36,6 +37,7 @@
     "simple-statistics": "^7.8.9",
     "technicalindicators": "^3.1.0",
     "web-push": "^3.6.7",
+    "tsx": "^4.21.0",
     "ws": "^8.19.0",
     "yahoo-finance2": "^3.13.2"
   },
@@ -52,7 +54,6 @@
     "eslint-config-next": "16.1.6",
     "postcss": "^8.5.8",
     "tailwindcss": "^3.4.19",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

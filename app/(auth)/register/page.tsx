@@ -88,7 +88,7 @@ export default function RegisterPage() {
 
           <button
             onClick={handleGoogle}
-            className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border text-sm font-medium text-text-primary transition-all duration-200 hover:border-gold-500/40 hover:bg-navy-700/50 mb-6"
+            className="btn-ghost w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border text-sm font-medium text-text-primary hover:border-gold-500/40 hover:bg-navy-700/50 mb-6"
             style={{ borderColor: "rgba(255,255,255,0.1)" }}
           >
             <GoogleIcon />
@@ -180,19 +180,11 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 px-4 rounded-xl text-sm font-medium transition-all duration-200 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-gold w-full py-3 px-4 rounded-xl text-sm font-medium mt-2"
               style={{
                 background: "linear-gradient(135deg, #ede4cc 0%, #f7f3e5 100%)",
                 color: "#050d1a",
                 boxShadow: "0 0 12px rgba(247,243,229,0.4), 0 0 28px rgba(247,243,229,0.15)",
-              }}
-              onMouseEnter={(e) => {
-                (e.target as HTMLButtonElement).style.boxShadow =
-                  "0 0 20px rgba(247,243,229,0.6), 0 0 48px rgba(247,243,229,0.25)";
-              }}
-              onMouseLeave={(e) => {
-                (e.target as HTMLButtonElement).style.boxShadow =
-                  "0 0 12px rgba(247,243,229,0.4), 0 0 28px rgba(247,243,229,0.15)";
               }}
             >
               {loading ? "Creating account..." : "Create account"}

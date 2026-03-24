@@ -6,13 +6,14 @@ import { signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: "⊞" },  // grid overview
-  { href: "/watchlist", label: "Watchlist",  icon: "★" },  // starred/watched
-  { href: "/alerts",    label: "Alerts",     icon: "⚑" },  // flag = flagged/alert
-  { href: "/news",      label: "News",       icon: "☰" },  // lines = feed/newspaper
-  { href: "/signals",   label: "Signals",    icon: "↗" },  // trending up
-  { href: "/portfolio", label: "Portfolio",  icon: "⊕" },  // holdings/positions
-  { href: "/simulate",  label: "Simulate",   icon: "⟳" },  // replay/test scenarios
+  { href: "/dashboard",   label: "Dashboard",  icon: "⊞" },  // grid overview
+  { href: "/watchlist",   label: "Watchlist",  icon: "★" },  // starred/watched
+  { href: "/alerts",      label: "Alerts",     icon: "⚑" },  // flag = flagged/alert
+  { href: "/news",        label: "News",       icon: "☰" },  // lines = feed/newspaper
+  { href: "/signals",     label: "Signals",    icon: "↗" },  // trending up
+  { href: "/portfolio",   label: "Portfolio",  icon: "⊕" },  // holdings/positions
+  { href: "/simulate",    label: "Simulate",   icon: "⟳" },  // replay/test scenarios
+  { href: "/how-to-use",  label: "Guide",      icon: "?" },  // how-to / onboarding
 ];
 
 function useUnreadAlerts() {
@@ -63,8 +64,10 @@ export default function Sidebar() {
     <aside
       className="fixed left-0 top-0 h-full w-64 flex flex-col border-r"
       style={{
-        background: "rgba(5, 13, 26, 0.95)",
+        background: "rgba(5, 13, 26, 0.92)",
         borderColor: "rgba(247,243,229,0.1)",
+        backdropFilter: "blur(20px) saturate(1.4)",
+        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
       }}
     >
       {/* Brand */}
@@ -83,7 +86,7 @@ export default function Sidebar() {
           Acrue
         </span>
         <p className="text-xs tracking-[0.2em] uppercase mt-1.5" style={{ color: "rgba(247,243,229,0.35)" }}>
-          Accrue your edge
+          Built to Accrue
         </p>
       </div>
 
@@ -97,11 +100,15 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm hover:text-gold-400 btn-nudge"
               style={{
-                color: active ? "#d4ccae" : "#a0abbe",
-                background: active ? "rgba(247,243,229,0.08)" : "transparent",
-                boxShadow: active ? "inset 0 0 0 1px rgba(247,243,229,0.15)" : "none",
+                color: active ? "#f7f3e5" : "#a0abbe",
+                background: active
+                  ? "linear-gradient(90deg, rgba(247,243,229,0.1) 0%, rgba(247,243,229,0.04) 100%)"
+                  : "transparent",
+                boxShadow: active
+                  ? "inset 0 0 0 1px rgba(247,243,229,0.18), 0 0 20px rgba(247,243,229,0.04)"
+                  : "none",
               }}
             >
               <span className="text-base w-5 text-center">{icon}</span>
@@ -118,10 +125,11 @@ export default function Sidebar() {
                   {/* Still show badge even when active */}
                   {isAlerts && <UnreadBadge count={unreadAlerts} />}
                   <span
-                    className="ml-auto w-1 h-4 rounded-full"
+                    className="ml-auto w-1 h-5 rounded-full"
                     style={{
-                      background: "#d4ccae",
-                      boxShadow: "0 0 8px rgba(247,243,229,0.8)",
+                      background: "linear-gradient(180deg, #f7f3e5, #d4ccae)",
+                      boxShadow: "0 0 6px rgba(247,243,229,0.8), 0 0 14px rgba(247,243,229,0.5)",
+                      animation: "indicatorPulse 2.5s ease-in-out infinite",
                     }}
                   />
                 </>
@@ -131,11 +139,18 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Sign out */}
-      <div className="px-3 py-4 border-t" style={{ borderColor: "rgba(247,243,229,0.1)" }}>
+      {/* Sign out + architecture link */}
+      <div className="px-3 py-4 border-t space-y-0.5" style={{ borderColor: "rgba(247,243,229,0.1)" }}>
+        <Link
+          href="/architecture"
+          className="btn-nudge flex items-center gap-3 px-3 py-2 rounded-xl text-xs w-full text-text-muted hover:text-gold-400 transition-colors"
+        >
+          <span className="text-sm w-5 text-center opacity-60">⬡</span>
+          Architecture
+        </Link>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm w-full text-left text-text-muted hover:text-text-secondary transition-colors"
+          className="btn-nudge flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm w-full text-left text-text-muted hover:text-text-secondary transition-colors"
         >
           <span className="text-base w-5 text-center">→</span>
           Sign out

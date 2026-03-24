@@ -85,17 +85,223 @@ h1 {
   text-shadow: 0 0 12px rgba(201, 168, 76, 0.6), 0 0 24px rgba(201, 168, 76, 0.2);
 }
 
-/* Scrollbar */
+/* ── Animated background ─────────────────────────────────────────────────── */
+
+body::before {
+  content: '';
+  position: fixed;
+  top: -60%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 0%, rgba(247,243,229,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 15% 80%, rgba(212,204,174,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 30% at 85% 85%, rgba(212,204,174,0.04) 0%, transparent 50%);
+  animation: bgDrift 24s ease infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes bgDrift {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  33%       { transform: translate(3%, 4%) rotate(3deg); }
+  66%       { transform: translate(-3%, 3%) rotate(-3deg); }
+}
+
+/* ── Glassmorphism ───────────────────────────────────────────────────────── */
+
+.glass {
+  background: rgba(10, 22, 40, 0.65) !important;
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(247, 243, 229, 0.1) !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(247, 243, 229, 0.06);
+}
+
+.glass-hover {
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s cubic-bezier(0.4,0,0.2,1);
+}
+
+.glass-hover:hover {
+  border-color: rgba(247, 243, 229, 0.22) !important;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(247, 243, 229, 0.08),
+    0 0 40px rgba(247, 243, 229, 0.06);
+  transform: translateY(-3px);
+}
+
+/* ── Card spotlight (set --mx / --my via JS) ─────────────────────────────── */
+
+.spotlight {
+  position: relative;
+  overflow: hidden;
+}
+
+.spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    500px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(247, 243, 229, 0.07),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.spotlight:hover::before {
+  opacity: 1;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+@keyframes goldPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(247,243,229,0.25), 0 0 28px rgba(247,243,229,0.08); }
+  50%       { box-shadow: 0 0 20px rgba(247,243,229,0.45), 0 0 48px rgba(247,243,229,0.18); }
+}
+
+@keyframes indicatorPulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(247,243,229,0.8); }
+  50%       { box-shadow: 0 0 14px rgba(247,243,229,1), 0 0 28px rgba(247,243,229,0.5); }
+}
+
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-5px); }
+}
+
+.animate-fade-up   { animation: fadeInUp   0.5s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-fade-up-1 { animation: fadeInUp   0.5s cubic-bezier(0.4,0,0.2,1) 0.08s both; }
+.animate-fade-up-2 { animation: fadeInUp   0.5s cubic-bezier(0.4,0,0.2,1) 0.16s both; }
+.animate-fade-up-3 { animation: fadeInUp   0.5s cubic-bezier(0.4,0,0.2,1) 0.24s both; }
+.animate-fade-up-4 { animation: fadeInUp   0.5s cubic-bezier(0.4,0,0.2,1) 0.32s both; }
+.animate-scale-in  { animation: fadeInScale 0.4s cubic-bezier(0.4,0,0.2,1) both; }
+
+/* stagger children */
+.stagger-children > *:nth-child(1) { animation: fadeInUp 0.5s 0.04s both; }
+.stagger-children > *:nth-child(2) { animation: fadeInUp 0.5s 0.10s both; }
+.stagger-children > *:nth-child(3) { animation: fadeInUp 0.5s 0.16s both; }
+.stagger-children > *:nth-child(4) { animation: fadeInUp 0.5s 0.22s both; }
+.stagger-children > *:nth-child(5) { animation: fadeInUp 0.5s 0.28s both; }
+.stagger-children > *:nth-child(6) { animation: fadeInUp 0.5s 0.34s both; }
+.stagger-children > *:nth-child(n+7) { animation: fadeInUp 0.5s 0.40s both; }
+
+/* ── Shimmer skeleton ────────────────────────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 31, 56, 0.8) 25%,
+    rgba(247, 243, 229, 0.06) 50%,
+    rgba(15, 31, 56, 0.8) 75%
+  );
+  background-size: 400px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+/* ── Row hover ───────────────────────────────────────────────────────────── */
+
+.row-hover {
+  transition: background 0.15s ease;
+}
+
+.row-hover:hover {
+  background: rgba(247, 243, 229, 0.04) !important;
+}
+
+/* ── Button micro-interactions ───────────────────────────────────────────── */
+
+/* Gold gradient button — scale up + glow on hover, press-in on click */
+.btn-gold {
+  transition: transform 0.18s cubic-bezier(0.4,0,0.2,1),
+              box-shadow 0.18s ease,
+              filter 0.18s ease;
+  will-change: transform;
+}
+.btn-gold:hover:not(:disabled) {
+  transform: scale(1.04) translateY(-2px);
+  filter: brightness(1.07);
+}
+.btn-gold:active:not(:disabled) {
+  transform: scale(0.96) translateY(0);
+  filter: brightness(0.94);
+  transition-duration: 0.07s;
+}
+.btn-gold:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Ghost / border button — subtle lift + border brightens on hover */
+.btn-ghost {
+  transition: transform 0.18s cubic-bezier(0.4,0,0.2,1),
+              border-color 0.18s ease,
+              color 0.18s ease,
+              background 0.18s ease;
+  will-change: transform;
+}
+.btn-ghost:hover {
+  transform: scale(1.02) translateY(-1px);
+}
+.btn-ghost:active {
+  transform: scale(0.97) translateY(0);
+  transition-duration: 0.07s;
+}
+
+/* Icon / text button — nudge right on hover */
+.btn-nudge {
+  transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), color 0.15s ease;
+}
+.btn-nudge:hover {
+  transform: translateX(3px);
+}
+.btn-nudge:active {
+  transform: translateX(1px);
+  transition-duration: 0.07s;
+}
+
+/* ── Gold pulse on elements ──────────────────────────────────────────────── */
+
+.pulse-gold {
+  animation: goldPulse 3s ease-in-out infinite;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--navy-800);
+  background: rgba(10, 22, 40, 0.5);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--navy-500);
-  border-radius: 2px;
+  background: rgba(212, 204, 174, 0.25);
+  border-radius: 3px;
+  transition: background 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--gold-600);
+  background: rgba(212, 204, 174, 0.5);
 }

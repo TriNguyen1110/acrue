@@ -80,6 +80,10 @@ radial-gradient(ellipse 60% 40% at 50% 0%, rgba(247,243,229,0.07) 0%, transparen
 - Primary: gold gradient (`#D4CCAE` → `#F7F3E5`), dark navy text (`#050D1A`)
 - Add `.glow-gold` on default, `.glow-gold-lg` on hover
 - Border radius: `rounded-xl`
+- **Micro-interactions** — always add the appropriate class:
+  - `.btn-gold` — gold CTA: `scale(1.04) translateY(-2px)` on hover, press-in `scale(0.96)` on click
+  - `.btn-ghost` — ghost/border button: `scale(1.02) translateY(-1px)` on hover, press-in on click
+  - `.btn-nudge` — text/icon links: `translateX(3px)` on hover (used in sidebar nav, sign out, footer links)
 
 ### Inputs
 - Background: `navy-800`
@@ -93,11 +97,33 @@ radial-gradient(ellipse 60% 40% at 50% 0%, rgba(247,243,229,0.07) 0%, transparen
 - Border radius: `rounded-2xl`
 
 ### Sidebar
-- Background: `rgba(5, 13, 26, 0.95)`
+- Background: `rgba(5, 13, 26, 0.92)` + `backdropFilter: blur(20px) saturate(1.4)` — true glass
 - Brand centered: `Acrue` in DM Serif Display, gold-400, with glow
-- Slogan: `"Invest with clarity"` — small, muted, tracked wide
-- Active nav item: gold text + gold background tint + gold left indicator bar with glow
+- Slogan: `"Built to Accrue"` — small, muted, tracked wide
+- Active nav item: gradient background (`rgba(247,243,229,0.1)→0.04`) + inset border glow + `#f7f3e5` text
+- Active indicator: gradient pill (`#f7f3e5→#d4ccae`) with `indicatorPulse` animation
+- Nav links: `.btn-nudge` for translateX hover nudge
+- Footer: Architecture link + Sign out, both `.btn-nudge`
 - Dividers: `rgba(247,243,229,0.1)`
+
+---
+
+### Glassmorphism & Animation Utilities
+All defined in `app/globals.css`:
+
+| Class | Effect |
+|-------|--------|
+| `.glass` | `backdrop-filter: blur(20px)`, navy bg, gold border |
+| `.glass-hover` | Hover lift + border glow intensification |
+| `.spotlight` | CSS var `--mx`/`--my` radial gradient — set via `onMouseMove` |
+| `.skeleton` | Shimmer loading placeholder (90deg gradient animation) |
+| `.row-hover` | Subtle row hover background for table/list rows |
+| `.pulse-gold` | Ambient gold glow pulsing animation |
+| `.stagger-children` | Staggered `fadeInUp` on `nth-child(1–6+)` |
+| `.animate-fade-up[-1..4]` | Delayed `fadeInUp` entrance animations |
+| `.btn-gold` | Scale + brightness micro-interaction for gold CTAs |
+| `.btn-ghost` | Scale micro-interaction for ghost/border buttons |
+| `.btn-nudge` | translateX nudge for nav/text links |
 
 ---
 

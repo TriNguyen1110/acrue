@@ -9,6 +9,7 @@
 | `docs/API_PLAN.md` | All API endpoints, request/response shapes, background jobs, Node.js libraries |
 | `docs/DB_PLAN.md` | PostgreSQL schema, indexes, service-to-table mapping |
 | `docs/DECISIONS.md` | Architectural decisions and tradeoffs log |
+| `docs/ARCHITECTURE.md` | Hiring-focused engineering deep-dive — rate limiting, priority queue, NLP, MPT, WebSocket, all tradeoffs |
 
 ---
 
@@ -152,9 +153,10 @@ Frontend → API Routes → Services → Infrastructure (DB + Cache)
 | 8 | WebSocket server | Wire quotes + alerts into pages | `[x]` |
 | 9 | Deploy + env config | Smoke test + fix issues | `[x]` |
 | 10 | Bug fixes + polish | README + architecture diagram | `[x]` |
-| 11 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
-| 12 | End-to-end walkthrough + fix remaining bugs | Final UI polish + mobile responsiveness | `[ ]` |
-| 13 | Demo video / screenshots | Final README + live deploy check | `[ ]` |
+| 11 | docs/ARCHITECTURE.md + public /architecture page | Glassmorphism + micro-interactions UI pass | `[x]` |
+| 12 | Performance — query optimization + caching audit | Rate limiting + error handling review | `[ ]` |
+| 13 | End-to-end walkthrough + fix remaining bugs | Final UI polish + mobile responsiveness | `[ ]` |
+| 14 | Demo video / screenshots | Final README + live deploy check | `[ ]` |
 
 ---
 
@@ -298,7 +300,7 @@ Full tradeoff notes in `docs/DECISIONS.md`.
 - Navy is the foundation, gold is used sparingly as accent only
 - Buttons: gold gradient (`#EDE4CC` → `#F7F3E5`) with gold glow, dark navy text
 - Inputs: focus state uses gold border + subtle gold ring
-- Sidebar brand: centered, `Acrue` in DM Serif Display, slogan "Invest with clarity"
+- Sidebar brand: centered, `Acrue` in DM Serif Display, slogan "Built to Accrue"
 
 ---
 

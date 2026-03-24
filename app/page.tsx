@@ -29,11 +29,18 @@ export default async function LandingPage() {
             Acrue
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
+          <Link
+            href="/architecture"
+            className="btn-ghost px-3.5 py-1.5 rounded-full text-xs font-mono font-medium border hover:border-gold-400/40 hover:text-gold-400 transition-colors"
+            style={{ borderColor: "rgba(247,243,229,0.2)", color: "rgba(247,243,229,0.6)" }}
+          >
+            Engineering Deep-Dive
+          </Link>
           {session ? (
             <Link
               href="/dashboard"
-              className="px-5 py-2 rounded-xl text-sm font-medium transition-all"
+              className="btn-gold px-5 py-2 rounded-xl text-sm font-medium"
               style={{
                 background: "linear-gradient(135deg, #ede4cc 0%, #f7f3e5 100%)",
                 color: "#050d1a",
@@ -46,14 +53,14 @@ export default async function LandingPage() {
             <>
               <Link
                 href="/login"
-                className="px-4 py-2 rounded-xl text-sm font-medium border transition-colors hover:border-gold-400/40 hover:text-gold-400"
+                className="btn-ghost px-4 py-2 rounded-xl text-sm font-medium border hover:border-gold-400/40 hover:text-gold-400"
                 style={{ borderColor: "rgba(247,243,229,0.15)", color: "rgba(247,243,229,0.6)" }}
               >
                 Sign In
               </Link>
               <Link
                 href="/register"
-                className="px-5 py-2 rounded-xl text-sm font-medium transition-all"
+                className="btn-gold px-5 py-2 rounded-xl text-sm font-medium"
                 style={{
                   background: "linear-gradient(135deg, #ede4cc 0%, #f7f3e5 100%)",
                   color: "#050d1a",
@@ -91,7 +98,7 @@ export default async function LandingPage() {
         <div className="flex items-center justify-center gap-4 flex-wrap">
           <Link
             href={session ? "/dashboard" : "/register"}
-            className="px-8 py-3.5 rounded-xl text-sm font-semibold transition-all"
+            className="btn-gold px-8 py-3.5 rounded-xl text-sm font-semibold"
             style={{
               background: "linear-gradient(135deg, #ede4cc 0%, #f7f3e5 100%)",
               color: "#050d1a",
@@ -103,7 +110,7 @@ export default async function LandingPage() {
           {!session && (
             <Link
               href="/login"
-              className="px-8 py-3.5 rounded-xl text-sm font-medium border transition-colors hover:border-gold-400/40 hover:text-gold-400"
+              className="btn-ghost px-8 py-3.5 rounded-xl text-sm font-medium border hover:border-gold-400/40 hover:text-gold-400"
               style={{ borderColor: "rgba(247,243,229,0.2)", color: "rgba(247,243,229,0.6)" }}
             >
               Sign in
@@ -130,6 +137,39 @@ export default async function LandingPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* ── Engineer callout ── */}
+      <section className="relative z-10 max-w-5xl mx-auto px-6 pb-16">
+        <Link
+          href="/architecture"
+          className="btn-ghost group flex items-center justify-between gap-6 rounded-2xl px-8 py-5 border"
+          style={{
+            background: "rgba(10,22,40,0.5)",
+            borderColor: "rgba(247,243,229,0.12)",
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <div
+              className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-lg"
+              style={{ background: "rgba(247,243,229,0.07)", color: "rgba(247,243,229,0.7)" }}
+            >
+              ⬡
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-text-primary">Built for engineers</p>
+              <p className="text-xs text-text-muted mt-0.5">
+                Rate limiting, priority queues, NLP pipelines, MPT optimization — every design decision documented.
+              </p>
+            </div>
+          </div>
+          <span
+            className="shrink-0 text-sm font-mono font-medium group-hover:text-gold-400 transition-colors whitespace-nowrap"
+            style={{ color: "rgba(247,243,229,0.45)" }}
+          >
+            Architecture →
+          </span>
+        </Link>
       </section>
 
       {/* ── Features ── */}
@@ -253,7 +293,7 @@ export default async function LandingPage() {
         </p>
         <Link
           href={session ? "/dashboard" : "/register"}
-          className="inline-block px-10 py-4 rounded-xl text-sm font-semibold transition-all"
+          className="btn-gold inline-block px-10 py-4 rounded-xl text-sm font-semibold"
           style={{
             background: "linear-gradient(135deg, #ede4cc 0%, #f7f3e5 100%)",
             color: "#050d1a",
@@ -266,18 +306,33 @@ export default async function LandingPage() {
 
       {/* ── Footer ── */}
       <footer
-        className="relative z-10 border-t text-center py-6 text-[11px]"
+        className="relative z-10 border-t py-8 text-[11px]"
         style={{ borderColor: "rgba(247,243,229,0.08)", color: "rgba(247,243,229,0.35)" }}
       >
-        A Product By{" "}
-        <a
-          href="https://www.linkedin.com/in/tri-nguyen-524395253/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-gold-400 underline underline-offset-2 hover:text-gold-500 transition-colors"
-        >
-          Tri Nguyen
-        </a>
+        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <span>
+            A Product By{" "}
+            <a
+              href="https://www.linkedin.com/in/tri-nguyen-524395253/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gold-400 underline underline-offset-2 hover:text-gold-500 transition-colors"
+            >
+              Tri Nguyen
+            </a>
+          </span>
+          <div className="flex items-center gap-6">
+            <Link href="/architecture" className="hover:text-gold-400 transition-colors">
+              Architecture
+            </Link>
+            <Link href="/how-to-use" className="hover:text-gold-400 transition-colors">
+              How to Use
+            </Link>
+            <Link href="/register" className="hover:text-gold-400 transition-colors">
+              Get Started
+            </Link>
+          </div>
+        </div>
       </footer>
     </div>
   );

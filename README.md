@@ -139,6 +139,12 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
+## Engineering Deep-Dive
+
+For a full walkthrough of every architectural decision, constraint, and tradeoff — including the rate limiter design, scored priority queue, search autocomplete, NLP pipeline, and portfolio optimizer — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
 ## Project Structure
 
 ```

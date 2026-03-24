@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ArchitectureProgress from "@/components/ui/ArchitectureProgress";
 
 // ── Icon components (pure SVG, no dependencies) ───────────────────────────────
 
@@ -108,11 +109,13 @@ function IconServer() {
 // ── Section card ──────────────────────────────────────────────────────────────
 
 function Card({
+  id,
   icon,
   title,
   accent,
   children,
 }: {
+  id?: string;
   icon: React.ReactNode;
   title: string;
   accent: string;
@@ -120,6 +123,7 @@ function Card({
 }) {
   return (
     <div
+      id={id}
       className="rounded-2xl overflow-hidden"
       style={{
         background: "rgba(10, 22, 40, 0.65)",
@@ -170,6 +174,7 @@ export default function ArchitecturePage() {
       className="min-h-screen"
       style={{ background: "var(--navy-900)", color: "var(--text-primary)" }}
     >
+      <ArchitectureProgress />
       {/* Ambient background */}
       <div
         style={{
@@ -224,6 +229,7 @@ export default function ArchitecturePage() {
 
         {/* System architecture diagram */}
         <div
+          id="arch-overview"
           className="rounded-2xl mb-10 overflow-hidden animate-fade-up-1"
           style={{
             background: "rgba(10,22,40,0.7)",
@@ -301,6 +307,7 @@ External feeds:
 
           {/* Priority Queue */}
           <Card
+            id="arch-queue"
             icon={<IconZap />}
             title="Priority Queue & Rate Limiting"
             accent="linear-gradient(90deg, rgba(251,191,36,0.5), rgba(251,191,36,0.05) 70%, transparent)"
@@ -321,6 +328,7 @@ External feeds:
 
           {/* Ticker Scheduler */}
           <Card
+            id="arch-scheduler"
             icon={<IconActivity />}
             title="Ticker Scheduler — Work Queue"
             accent="linear-gradient(90deg, rgba(34,197,94,0.4), rgba(34,197,94,0.05) 70%, transparent)"
@@ -338,6 +346,7 @@ External feeds:
 
           {/* Search autocomplete */}
           <Card
+            id="arch-search"
             icon={<IconSearch />}
             title="Search Autocomplete & Recommender"
             accent="linear-gradient(90deg, rgba(147,197,253,0.4), rgba(147,197,253,0.05) 70%, transparent)"
@@ -357,6 +366,7 @@ External feeds:
 
           {/* Alert detection */}
           <Card
+            id="arch-alerts"
             icon={<IconBell />}
             title="Alert Detection"
             accent="linear-gradient(90deg, rgba(239,68,68,0.4), rgba(239,68,68,0.05) 70%, transparent)"
@@ -375,6 +385,7 @@ External feeds:
 
           {/* News pipeline */}
           <Card
+            id="arch-news"
             icon={<IconNewspaper />}
             title="News Pipeline & NLP"
             accent="linear-gradient(90deg, rgba(168,85,247,0.4), rgba(168,85,247,0.05) 70%, transparent)"
@@ -395,6 +406,7 @@ External feeds:
 
           {/* Signal scoring */}
           <Card
+            id="arch-signals"
             icon={<IconTrendingUp />}
             title="Signal Scoring"
             accent="linear-gradient(90deg, rgba(52,211,153,0.4), rgba(52,211,153,0.05) 70%, transparent)"
@@ -422,6 +434,7 @@ External feeds:
 
           {/* Portfolio optimization */}
           <Card
+            id="arch-portfolio"
             icon={<IconPieChart />}
             title="Portfolio Optimization — MPT"
             accent="linear-gradient(90deg, rgba(251,191,36,0.4), rgba(251,191,36,0.05) 70%, transparent)"
@@ -442,6 +455,7 @@ External feeds:
 
           {/* WebSocket */}
           <Card
+            id="arch-websocket"
             icon={<IconWifi />}
             title="WebSocket Server"
             accent="linear-gradient(90deg, rgba(6,182,212,0.4), rgba(6,182,212,0.05) 70%, transparent)"
@@ -464,6 +478,7 @@ External feeds:
 
           {/* Database */}
           <Card
+            id="arch-database"
             icon={<IconDatabase />}
             title="Database Design"
             accent="linear-gradient(90deg, rgba(99,102,241,0.4), rgba(99,102,241,0.05) 70%, transparent)"
@@ -479,6 +494,7 @@ External feeds:
 
           {/* Frontend architecture */}
           <Card
+            id="arch-frontend"
             icon={<IconLayers />}
             title="Frontend Architecture"
             accent="linear-gradient(90deg, rgba(244,114,182,0.4), rgba(244,114,182,0.05) 70%, transparent)"
@@ -498,6 +514,7 @@ External feeds:
 
           {/* Deployment */}
           <Card
+            id="arch-deployment"
             icon={<IconServer />}
             title="Deployment"
             accent="linear-gradient(90deg, rgba(251,146,60,0.4), rgba(251,146,60,0.05) 70%, transparent)"

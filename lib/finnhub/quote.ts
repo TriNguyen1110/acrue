@@ -43,15 +43,19 @@ async function fetchProfile(ticker: string): Promise<FinnhubProfile | null> {
   const cached = await redis.get(key);
   if (cached) return JSON.parse(cached) as FinnhubProfile;
 
-  const data = await finnhubGet<FinnhubProfile>(
-    "/stock/profile2",
-    { symbol: ticker },
-    PRIORITY.BACKGROUND // profile is slow-changing; background priority is fine
-  );
-  if (!data?.name) return null;
+  try {
+    const data = await finnhubGet<FinnhubProfile>(
+      "/stock/profile2",
+      { symbol: ticker },
+      PRIORITY.BACKGROUND // profile is slow-changing; background priority is fine
+    );
+    if (!data?.name) return null;
 
-  await redis.setex(key, PROFILE_TTL, JSON.stringify(data));
-  return data;
+    await redis.setex(key, PROFILE_TTL, JSON.stringify(data));
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchMetrics(ticker: string): Promise<FinnhubMetricData | null> {
@@ -59,15 +63,19 @@ async function fetchMetrics(ticker: string): Promise<FinnhubMetricData | null> {
   const cached = await redis.get(key);
   if (cached) return JSON.parse(cached) as FinnhubMetricData;
 
-  const data = await finnhubGet<{ metric: FinnhubMetricData }>(
-    "/stock/metric",
-    { symbol: ticker, metric: "all" },
-    PRIORITY.BACKGROUND
-  );
-  if (!data?.metric) return null;
+  try {
+    const data = await finnhubGet<{ metric: FinnhubMetricData }>(
+      "/stock/metric",
+      { symbol: ticker, metric: "all" },
+      PRIORITY.BACKGROUND
+    );
+    if (!data?.metric) return null;
 
-  await redis.setex(key, METRICS_TTL, JSON.stringify(data.metric));
-  return data.metric;
+    await redis.setex(key, METRICS_TTL, JSON.stringify(data.metric));
+    return data.metric;
+  } catch {
+    return null;
+  }
 }
 
 // ── Market state from current Eastern time ───────────────────────────────────

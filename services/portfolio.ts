@@ -162,8 +162,13 @@ function computePortfolioMetrics(holdings: HoldingWithMeta[]): PortfolioMetrics 
     if (h.analystTarget !== null && h.currentPrice > 0) {
       return (h.analystTarget - h.currentPrice) / h.currentPrice;
     }
-    // Annualise the day's % move as a rough proxy
-    return (h.changePct / 100) * 252;
+    // No analyst target cached — derive from 52w range: deviation from midpoint
+    // gives a momentum-adjusted annual return estimate without annualizing noise
+    if (h.week52High !== null && h.week52Low !== null && h.week52High > h.week52Low) {
+      const midpoint = (h.week52High + h.week52Low) / 2;
+      return (h.currentPrice - midpoint) / midpoint;
+    }
+    return h.changePct / 100;
   });
 
   const mu_p = portfolioReturn(weights, mus);
@@ -311,10 +316,18 @@ export async function getPortfolio(userId: string): Promise<PortfolioResponse> {
     };
   }
 
-  // Fetch quotes for all tickers; tolerate individual failures
-  const quoteResults = await Promise.allSettled(
-    dbHoldings.map((h) => getQuote(h.ticker))
-  );
+  // Fetch quotes + cached summaries for all tickers in parallel
+  // Summaries are Redis-only reads (no API calls) — TTL 6h, populated when tickers are viewed
+  const [quoteResults, summaryResults] = await Promise.all([
+    Promise.allSettled(dbHoldings.map((h) => getQuote(h.ticker))),
+    Promise.allSettled(
+      dbHoldings.map((h) =>
+        redis.get(`summary:${h.ticker.toUpperCase()}`).then((raw) =>
+          raw ? (JSON.parse(raw) as { targetMeanPrice: number | null }) : null
+        )
+      )
+    ),
+  ]);
 
   const holdingsWithMeta: HoldingWithMeta[] = [];
 
@@ -326,6 +339,9 @@ export async function getPortfolio(userId: string): Promise<PortfolioResponse> {
       result.status === "fulfilled" && result.value.price > 0
         ? result.value
         : null;
+
+    const summary =
+      summaryResults[i].status === "fulfilled" ? summaryResults[i].value : null;
 
     const currentPrice = quote?.price ?? row.avgCost; // fallback to avgCost if quote failed
     const marketValue = row.shares * currentPrice;
@@ -346,7 +362,7 @@ export async function getPortfolio(userId: string): Promise<PortfolioResponse> {
       week52High: quote?.week52High ?? null,
       week52Low: quote?.week52Low ?? null,
       changePct: quote?.changePct ?? 0,
-      analystTarget: null, // populated in optimizePortfolio; not needed here
+      analystTarget: summary?.targetMeanPrice ?? null,
       updatedAt: row.updatedAt.toISOString(),
     });
   }

@@ -453,6 +453,10 @@ export async function optimizePortfolio(
         : 0.3;
 
     // Expected annual return
+    // Analyst target upside is the preferred signal — more stable than a single day's move.
+    // Fallback annualises today's changePct, but a single day is very noisy so we clamp
+    // both paths to [-50%, +150%] to prevent the optimizer receiving garbage input
+    // (e.g. a -8% after-hours quote annualises to -2016%, collapsing weights to one ticker).
     const analystTarget = summary?.targetMeanPrice ?? null;
     let mu: number;
     if (analystTarget !== null && quote.price > 0) {
@@ -460,6 +464,7 @@ export async function optimizePortfolio(
     } else {
       mu = (quote.changePct / 100) * 252;
     }
+    mu = Math.max(-0.5, Math.min(1.5, mu)); // clamp to sane annual return range
 
     mus.push(mu);
     sigmas.push(sigma);

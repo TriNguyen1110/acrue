@@ -195,9 +195,10 @@ class TickerScheduler {
 
   /**
    * Pops the highest-scored item from the queue and fires a rate-limited fetch.
-   * Called ~55× per minute. No-ops when the queue is empty.
+   * Called ~55× per minute. No-ops when the queue is empty or market is closed.
    */
   private drain(): void {
+    if (!isMarketOpen()) return;
     const item = this.queue.shift();
     if (!item) return;
 
@@ -217,6 +218,22 @@ class TickerScheduler {
         if (meta) meta.lastFetchedAt = 0;
       });
   }
+}
+
+// ── Market hours guard ────────────────────────────────────────────────────────
+
+/**
+ * Returns true only during regular US market hours (9:30am–4:00pm ET, Mon–Fri).
+ * Prevents quote fetches and alert detection from firing on stale after-hours data.
+ */
+function isMarketOpen(): boolean {
+  const et = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York" })
+  );
+  const day  = et.getDay();                          // 0 = Sun, 6 = Sat
+  const mins = et.getHours() * 60 + et.getMinutes(); // minutes since midnight ET
+  if (day === 0 || day === 6) return false;           // weekend
+  return mins >= 570 && mins <= 960;                  // 9:30am–4:00pm ET
 }
 
 export const tickerScheduler = new TickerScheduler();

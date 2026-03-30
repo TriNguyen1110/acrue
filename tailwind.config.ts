@@ -26,9 +26,9 @@ const config = {
         },
       },
       fontFamily: {
-        display: ["DM Serif Display", "serif"],
-        sans: ["Inter", "sans-serif"],
-        mono: ["DM Mono", "monospace"],
+        display: ["var(--font-display)", "serif"],
+        sans: ["var(--font-sans)", "sans-serif"],
+        mono: ["var(--font-mono)", "monospace"],
       },
       boxShadow: {
         "glow-gold": "0 0 12px rgba(247, 243, 229, 0.35), 0 0 28px rgba(247, 243, 229, 0.12)",

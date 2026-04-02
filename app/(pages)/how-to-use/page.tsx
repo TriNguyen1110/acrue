@@ -65,9 +65,12 @@ export default function HowToUsePage() {
         </p>
       </div>
 
-      {/* Video placeholder */}
-      <div
-        className="mb-10 rounded-2xl border flex flex-col items-center justify-center"
+      {/* Demo video */}
+      <a
+        href="https://youtu.be/CGSzFK9VMNs"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mb-10 rounded-2xl border flex flex-col items-center justify-center transition-colors hover:border-gold-400/40"
         style={{
           background: "rgba(10,22,40,0.7)",
           borderColor: "rgba(247,243,229,0.1)",
@@ -77,11 +80,11 @@ export default function HowToUsePage() {
         <span className="text-5xl mb-4" style={{ filter: "drop-shadow(0 0 12px rgba(247,243,229,0.3))" }}>
           ▶
         </span>
-        <p className="font-display text-xl text-gold-400 mb-1">Demo video coming soon</p>
+        <p className="font-display text-xl text-gold-400 mb-1">Watch the demo</p>
         <p className="text-sm" style={{ color: "rgba(247,243,229,0.4)" }}>
-          Full walkthrough will be embedded here
+          youtu.be/CGSzFK9VMNs
         </p>
-      </div>
+      </a>
 
       {/* Feature sections */}
       <div className="space-y-4">

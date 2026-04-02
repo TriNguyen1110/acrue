@@ -170,18 +170,28 @@ export default function ArchitecturePage() {
             >
               ← Back to Acrue
             </Link>
-            <Link
-              href="/login"
-              className="btn-gold text-xs font-mono px-3 py-1.5 rounded-full"
-              style={{
-                background: "linear-gradient(135deg, #ede4cc, #f7f3e5)",
-                color: "#0a1628",
-                fontWeight: 600,
-                boxShadow: "0 0 16px rgba(247,243,229,0.25)",
-              }}
-            >
-              Sign in →
-            </Link>
+            <div className="flex items-center gap-3">
+              <a
+                href="https://youtu.be/CGSzFK9VMNs"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-mono text-text-muted hover:text-gold-400 transition-colors"
+              >
+                ▶ Demo video
+              </a>
+              <Link
+                href="/login"
+                className="btn-gold text-xs font-mono px-3 py-1.5 rounded-full"
+                style={{
+                  background: "linear-gradient(135deg, #ede4cc, #f7f3e5)",
+                  color: "#0a1628",
+                  fontWeight: 600,
+                  boxShadow: "0 0 16px rgba(247,243,229,0.25)",
+                }}
+              >
+                Sign in →
+              </Link>
+            </div>
           </div>
 
           <div className="text-center">

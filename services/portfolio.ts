@@ -341,7 +341,7 @@ export async function getPortfolio(userId: string): Promise<PortfolioResponse> {
         : null;
 
     const summary =
-      summaryResults[i].status === "fulfilled" ? summaryResults[i].value : null;
+      summaryResults[i].status === "fulfilled" ? (summaryResults[i] as PromiseFulfilledResult<{ targetMeanPrice: number | null } | null>).value : null;
 
     const currentPrice = quote?.price ?? row.avgCost; // fallback to avgCost if quote failed
     const marketValue = row.shares * currentPrice;
